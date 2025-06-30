@@ -14,7 +14,7 @@ This is a Laravel-based web application for peer tutoring.
 1. Clone the repository:
 
 ```bash
-git clone https://github.com/yourusername/your-repo.git
+git clone https://github.com/Maymay078/Peer-Tutor-Matching-System.git
 cd your-repo
 ```
 
