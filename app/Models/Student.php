@@ -1,0 +1,31 @@
+<?php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Model;
+
+class Student extends Model
+{
+    use HasFactory;
+
+    protected $fillable = [
+        'user_id', 
+        'student_id', 
+        'major', 
+        'year', 
+        'preferred_course', 
+        'availability'
+    ];
+
+    protected $casts = [
+        'preferred_course' => 'array',
+        'availability' => 'array',
+    ];
+
+    public function user()
+    {
+        return $this->belongsTo(User::class);
+    }
+
+}
