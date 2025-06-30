@@ -15,7 +15,7 @@ This is a Laravel-based web application for peer tutoring.
 
 ```bash
 git clone https://github.com/Maymay078/Peer-Tutor-Matching-System.git
-cd your-repo
+cd Peer-Tutor-Matching-System
 ```
 
 2. Install PHP dependencies using Composer:
