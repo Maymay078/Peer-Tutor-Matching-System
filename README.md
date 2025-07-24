@@ -62,7 +62,7 @@ php artisan key:generate
 ```bash
 php artisan migrate --seed
 ```
-php artisan migrate --seed
+
 
 7. Serve the application:
 

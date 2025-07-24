@@ -71,11 +71,18 @@ Route::get('/dashboard', function () {
     // API route for checking session availability
     Route::get('/api/check-availability', [\App\Http\Controllers\UserController::class, 'checkAvailability'])->name('api.check.availability');
 
+    // API route for cancelling a session
+    Route::post('/api/cancel-session', [\App\Http\Controllers\UserController::class, 'cancelSession'])->name('api.cancel.session');
+
     // New route for feedback page
     Route::get('/feedback', [FeedbackController::class, 'index'])->name('feedback');
 
     // Add POST route for feedback submission
     Route::post('/feedback', [FeedbackController::class, 'submit'])->name('feedback.submit');
+
+    // API routes for rescheduling session and fetching tutor availability for reschedule
+    Route::get('/api/tutor-availability-for-reschedule', [UserController::class, 'getTutorAvailabilityForReschedule'])->name('api.tutor.availability.reschedule');
+    Route::post('/api/reschedule-session', [UserController::class, 'rescheduleSession'])->name('api.reschedule.session');
 
     // API route for canceling a booking session
     // Route::post('/api/cancel-session/{id}', [\App\Http\Controllers\UserController_CancelSession::class, 'cancelSession'])->name('api.cancel-session');

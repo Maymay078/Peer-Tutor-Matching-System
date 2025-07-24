@@ -14,6 +14,264 @@ class UserController extends Controller
      * Handle the registration request.
      */
 
+    /**
+     * API endpoint to get tutor availability for rescheduling a session.
+     */
+    public function getTutorAvailabilityForReschedule(Request $request)
+    {
+        $sessionId = $request->query('session_id');
+        $user = auth()->user();
+
+        if (!$user || !$user->student) {
+            return response()->json(['error' => 'Unauthorized'], 401);
+        }
+
+        $session = \App\Models\BookingSession::find($sessionId);
+        if (!$session) {
+            return response()->json(['error' => 'Session not found'], 404);
+        }
+
+        $tutor = $session->tutor;
+        if (!$tutor) {
+            return response()->json(['error' => 'Tutor not found'], 404);
+        }
+
+        // Filter tutor availability excluding booked times
+        $tutor = $this->filterTutorAvailability($tutor, $user->student->id);
+
+        // Get the subject of the session to find pricing
+        $sessionSubject = $session->subject_name ?? null;
+
+        // Get tutor expertise with pricing
+        $expertise = $tutor->expertise;
+        if (is_string($expertise)) {
+            $expertise = json_decode($expertise, true) ?: [];
+        }
+
+        // Find price per hour for the session subject
+        $pricePerHour = null;
+        foreach ($expertise as $subject) {
+            if (isset($subject['name']) && $subject['name'] === $sessionSubject) {
+                $pricePerHour = $subject['price_per_hour'] ?? null;
+                break;
+            }
+        }
+
+        // Add price info to each time slot in availability
+        $availabilityWithPrice = [];
+        foreach ($tutor->availability as $slot) {
+            $availabilityWithPrice[] = [
+                'date' => $slot['date'] ?? null,
+                'time' => array_map(function ($time) use ($pricePerHour) {
+                    return [
+                        'time' => $time,
+                        'price_per_hour' => $pricePerHour,
+                    ];
+                }, $slot['time'] ?? []),
+            ];
+        }
+
+        // If no availability, add a flag
+        $noAvailability = empty($availabilityWithPrice);
+
+        return response()->json([
+            'availability' => $availabilityWithPrice,
+            'price_per_hour' => $pricePerHour,
+            'no_availability' => $noAvailability,
+            'tutor_id' => $tutor->id,  // Added tutor_id to response
+        ]);
+    }
+
+    /**
+     * API endpoint to reschedule a session with selected date and time.
+     */
+    public function rescheduleSession(Request $request)
+    {
+        $user = auth()->user();
+
+        if (!$user || !$user->student) {
+            return response()->json(['error' => 'Unauthorized'], 401);
+        }
+
+        $validated = $request->validate([
+            'session_id' => 'required|exists:booking_sessions,id',
+            'date' => 'required|date',
+            'time' => 'required|string',
+        ]);
+
+        $session = \App\Models\BookingSession::find($validated['session_id']);
+        if (!$session) {
+            return response()->json(['error' => 'Session not found'], 404);
+        }
+
+        if ($session->student_id !== $user->student->id) {
+            return response()->json(['error' => 'Forbidden'], 403);
+        }
+
+        // Validate that the selected date and time are not in the past
+        $now = \Carbon\Carbon::now('Asia/Kuala_Lumpur');
+        $selectedDate = \Carbon\Carbon::parse($validated['date'], 'Asia/Kuala_Lumpur');
+        if ($selectedDate->lt($now->startOfDay())) {
+            return response()->json(['error' => 'Selected date is in the past.'], 422);
+        }
+
+        $timeRanges = explode(',', $validated['time']);
+        foreach ($timeRanges as $range) {
+            $range = trim($range);
+            $times = explode(' - ', $range);
+            if (count($times) == 2) {
+                $start = \Carbon\Carbon::createFromFormat('g:i A', trim($times[0]), 'Asia/Kuala_Lumpur');
+                $end = \Carbon\Carbon::createFromFormat('g:i A', trim($times[1]), 'Asia/Kuala_Lumpur');
+                $startDateTime = \Carbon\Carbon::parse($validated['date'] . ' ' . $start->format('H:i'), 'Asia/Kuala_Lumpur');
+                $endDateTime = \Carbon\Carbon::parse($validated['date'] . ' ' . $end->format('H:i'), 'Asia/Kuala_Lumpur');
+
+                if ($endDateTime->lt($now)) {
+                    return response()->json(['error' => 'Selected time slot is in the past.'], 422);
+                }
+
+                // Check for tutor's existing sessions that conflict with the selected time slot
+                $conflictingSessions = \App\Models\BookingSession::where('tutor_id', $session->tutor_id)
+                    ->where('session_date', $validated['date'])
+                    ->where('status', '!=', 'rejected')
+                    ->where('id', '!=', $session->id)
+                    ->get();
+
+                foreach ($conflictingSessions as $conflict) {
+                    $conflictTimeRanges = explode(',', $conflict->session_time);
+                    foreach ($conflictTimeRanges as $conflictRange) {
+                        $conflictRange = trim($conflictRange);
+                        $conflictTimes = explode(' - ', $conflictRange);
+                        if (count($conflictTimes) == 2) {
+                            $conflictStart = \Carbon\Carbon::createFromFormat('g:i A', trim($conflictTimes[0]), 'Asia/Kuala_Lumpur');
+                            $conflictEnd = \Carbon\Carbon::createFromFormat('g:i A', trim($conflictTimes[1]), 'Asia/Kuala_Lumpur');
+                            $conflictStartDateTime = \Carbon\Carbon::parse($conflict->session_date . ' ' . $conflictStart->format('H:i'), 'Asia/Kuala_Lumpur');
+                            $conflictEndDateTime = \Carbon\Carbon::parse($conflict->session_date . ' ' . $conflictEnd->format('H:i'), 'Asia/Kuala_Lumpur');
+
+                            // Check for overlap
+                            if ($startDateTime->lt($conflictEndDateTime) && $endDateTime->gt($conflictStartDateTime)) {
+                                return response()->json(['error' => 'Selected time slot conflicts with another session.'], 409);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Calculate total hours from session_time
+        $totalHours = 0;
+        foreach ($timeRanges as $range) {
+            $range = trim($range);
+            $times = explode(' - ', $range);
+            if (count($times) == 2) {
+                $start = \Carbon\Carbon::createFromFormat('g:i A', trim($times[0]));
+                $end = \Carbon\Carbon::createFromFormat('g:i A', trim($times[1]));
+                $diff = $end->diffInMinutes($start);
+                $totalHours += $diff / 60;
+            }
+        }
+
+        // Get tutor's expertise to find price per hour for the subject
+        $tutor = $session->tutor;
+        $expertise = $tutor->expertise;
+        if (is_string($expertise)) {
+            $expertise = json_decode($expertise, true) ?: [];
+        }
+
+        $pricePerHour = 0;
+        foreach ($expertise as $subject) {
+            if (isset($subject['name']) && $subject['name'] === $session->subject_name) {
+                $pricePerHour = $subject['price_per_hour'] ?? 0;
+                break;
+            }
+        }
+
+        // Calculate new total price
+        $newTotalPrice = $pricePerHour * $totalHours;
+
+        // Update session date, time, status, and total price
+        $session->session_date = $validated['date'];
+        $session->session_time = $validated['time'];
+        $session->total_price = $newTotalPrice;
+        $session->status = 'pending'; // Reset status to pending on reschedule
+        $session->save();
+
+        // Fetch updated sessions for the student
+        $student = $user->student;
+        $now = now();
+        $sessions = \App\Models\BookingSession::where('student_id', $student->id)
+            ->orderBy('session_date', 'asc')
+            ->get()
+            ->filter(function ($session) use ($now) {
+                $sessionDate = \Carbon\Carbon::parse($session->session_date, 'Asia/Kuala_Lumpur');
+                $timeRanges = explode(',', $session->session_time);
+                $lastTimeRange = trim(end($timeRanges));
+                $timeParts = explode(' - ', $lastTimeRange);
+                $endTime = isset($timeParts[1]) ? trim($timeParts[1]) : '23:59';
+                $sessionEnd = \Carbon\Carbon::parse($session->session_date . ' ' . $endTime, 'Asia/Kuala_Lumpur');
+                return $sessionEnd->gte($now);
+            })
+            ->sort(function ($a, $b) {
+                // First sort by date
+                $dateComparison = strcmp($a->session_date, $b->session_date);
+                if ($dateComparison !== 0) {
+                    return $dateComparison;
+                }
+                
+                // If dates are the same, sort by start time
+                $aTimeRanges = explode(',', $a->session_time);
+                $bTimeRanges = explode(',', $b->session_time);
+                
+                $aFirstTime = trim($aTimeRanges[0] ?? '');
+                $bFirstTime = trim($bTimeRanges[0] ?? '');
+                
+                $aStartTime = explode(' - ', $aFirstTime)[0] ?? '';
+                $bStartTime = explode(' - ', $bFirstTime)[0] ?? '';
+                
+                // Convert to 24-hour format for comparison
+                $aTime24 = \Carbon\Carbon::createFromFormat('g:i A', trim($aStartTime))->format('H:i');
+                $bTime24 = \Carbon\Carbon::createFromFormat('g:i A', trim($bStartTime))->format('H:i');
+                
+                return strcmp($aTime24, $bTime24);
+            })
+            ->map(function ($session) {
+                $tutor = $session->tutor()->with('user')->first();
+                $tutorName = $tutor ? $tutor->user->full_name : 'Tutor';
+
+                // Calculate session status based on date and time
+                $now = \Carbon\Carbon::now();
+                $sessionDate = \Carbon\Carbon::parse($session->session_date);
+                $timeRanges = explode(',', $session->session_time);
+                $firstTimeRange = trim($timeRanges[0] ?? '');
+                $timeParts = explode(' - ', $firstTimeRange);
+                $startTime = isset($timeParts[0]) ? trim($timeParts[0]) : '00:00';
+                $endTime = isset($timeParts[1]) ? trim($timeParts[1]) : '23:59';
+                $sessionStart = \Carbon\Carbon::parse($session->session_date . ' ' . $startTime);
+                $sessionEnd = \Carbon\Carbon::parse($session->session_date . ' ' . $endTime);
+
+                if ($sessionEnd->lt($now)) {
+                    $status = 'past';
+                } elseif ($sessionStart->lte($now) && $sessionEnd->gte($now)) {
+                    $status = 'ongoing';
+                } else {
+                    $status = 'future';
+                }
+
+                return [
+                    'id' => $session->id,
+                    'subject' => $session->subject_name ?? 'N/A',
+                    'date' => $session->session_date ?? 'N/A',
+                    'time' => $session->session_time ?? 'N/A',
+                    'tutor_name' => $tutorName,
+                    'status' => $status,
+                ];
+            })->values()->all();
+
+        return response()->json([
+            'message' => 'Session rescheduled successfully.',
+            'sessions' => $sessions,
+        ]);
+    }
+
       public function sessionScheduling(Request $request)
     {
         // Get the tutor_id from the query string
@@ -163,6 +421,15 @@ class UserController extends Controller
                     
                     // Filter availability to exclude already booked times
                     $tutor = $this->filterTutorAvailability($tutor, $user->student->id);
+
+                    // Sort availability dates ascendingly by date
+                    if (is_array($tutor->availability)) {
+                        $availability = $tutor->availability;
+                        usort($availability, function ($a, $b) {
+                            return strtotime($a['date']) <=> strtotime($b['date']);
+                        });
+                        $tutor->availability = $availability;
+                    }
                     
                     return $tutor;
                 });
@@ -182,7 +449,85 @@ class UserController extends Controller
             }
         }
 
-        return view('home_student', compact('tutors'));
+        $user = auth()->user();
+        $sessions = [];
+
+        if ($user && $user->role === 'student') {
+            $student = $user->student;
+            if ($student) {
+                $now = now();
+                $sessions = \App\Models\BookingSession::where('student_id', $student->id)
+                    ->orderBy('session_date', 'asc')
+                    ->get()
+                    ->filter(function ($session) use ($now) {
+                        $sessionDate = \Carbon\Carbon::parse($session->session_date, 'Asia/Kuala_Lumpur');
+                        $timeRanges = explode(',', $session->session_time);
+                        $lastTimeRange = trim(end($timeRanges));
+                        $timeParts = explode(' - ', $lastTimeRange);
+                        $endTime = isset($timeParts[1]) ? trim($timeParts[1]) : '23:59';
+                        $sessionEnd = \Carbon\Carbon::parse($session->session_date . ' ' . $endTime, 'Asia/Kuala_Lumpur');
+                        return $sessionEnd->gte($now);
+                    })
+                    ->sort(function ($a, $b) {
+                        // First sort by date
+                        $dateComparison = strcmp($a->session_date, $b->session_date);
+                        if ($dateComparison !== 0) {
+                            return $dateComparison;
+                        }
+                        
+                        // If dates are the same, sort by start time
+                        $aTimeRanges = explode(',', $a->session_time);
+                        $bTimeRanges = explode(',', $b->session_time);
+                        
+                        $aFirstTime = trim($aTimeRanges[0] ?? '');
+                        $bFirstTime = trim($bTimeRanges[0] ?? '');
+                        
+                        $aStartTime = explode(' - ', $aFirstTime)[0] ?? '';
+                        $bStartTime = explode(' - ', $bFirstTime)[0] ?? '';
+                        
+                        // Convert to 24-hour format for comparison
+                        $aTime24 = \Carbon\Carbon::createFromFormat('g:i A', trim($aStartTime))->format('H:i');
+                        $bTime24 = \Carbon\Carbon::createFromFormat('g:i A', trim($bStartTime))->format('H:i');
+                        
+                        return strcmp($aTime24, $bTime24);
+                    })
+                    ->map(function ($session) {
+                        $tutor = $session->tutor()->with('user')->first();
+                        $tutorName = $tutor ? $tutor->user->full_name : 'Tutor';
+
+                        // Calculate session status based on date and time
+                        $now = \Carbon\Carbon::now();
+                        $sessionDate = \Carbon\Carbon::parse($session->session_date);
+                        $timeRanges = explode(',', $session->session_time);
+                        $firstTimeRange = trim($timeRanges[0] ?? '');
+                        $timeParts = explode(' - ', $firstTimeRange);
+                        $startTime = isset($timeParts[0]) ? trim($timeParts[0]) : '00:00';
+                        $endTime = isset($timeParts[1]) ? trim($timeParts[1]) : '23:59';
+                        $sessionStart = \Carbon\Carbon::parse($session->session_date . ' ' . $startTime);
+                        $sessionEnd = \Carbon\Carbon::parse($session->session_date . ' ' . $endTime);
+
+                        if ($sessionEnd->lt($now)) {
+                            $status = 'past';
+                        } elseif ($sessionStart->lte($now) && $sessionEnd->gte($now)) {
+                            $status = 'ongoing';
+                        } else {
+                            $status = 'future';
+                        }
+
+                    return (object)[
+                        'id' => $session->id,
+                        'subject' => $session->subject_name ?? 'N/A',
+                        'date' => $session->session_date ?? 'N/A',
+                        'time' => $session->session_time ?? 'N/A',
+                        'tutor_name' => $tutorName,
+                        'tutor_id' => $session->tutor_id,  // Added tutor_id here
+                        'status' => $status,
+                    ];
+                    })->toArray();
+            }
+        }
+
+        return view('home_student', compact('tutors', 'sessions'));
     }
 
     /**
@@ -194,13 +539,15 @@ class UserController extends Controller
         $events = [];
 
         if ($user && $user->role === 'tutor') {
-            $tutor = $user->tutor;
-            if ($tutor) {
-                $bookingSessions = \App\Models\BookingSession::where('tutor_id', $tutor->id)->get();
+                $tutor = $user->tutor;
+                if ($tutor) {
+                    $now = now();
+                $bookingSessions = \App\Models\BookingSession::where('tutor_id', $tutor->id)
+                    ->get();
 
-                foreach ($bookingSessions as $session) {
-                    // Split session_time by comma to handle multiple time slots
-                    $timeRanges = explode(',', $session->session_time);
+                    foreach ($bookingSessions as $session) {
+                        // Split session_time by comma to handle multiple time slots
+                        $timeRanges = explode(',', $session->session_time);
                     $student = $session->student()->with('user')->first();
                     $studentName = $student ? $student->user->full_name : 'Student';
 
@@ -211,8 +558,8 @@ class UserController extends Controller
                         $endTime = isset($timeParts[1]) ? trim($timeParts[1]) : '23:59';
 
                         // Support both "HH:mm" and "HH:mm AM/PM" formats
-                        $startDateTime = date('Y-m-d\TH:i:s', strtotime($session->session_date . ' ' . $startTime));
-                        $endDateTime = date('Y-m-d\TH:i:s', strtotime($session->session_date . ' ' . $endTime));
+                        $startDateTime = \Carbon\Carbon::parse($session->session_date . ' ' . $startTime)->toIso8601String();
+                        $endDateTime = \Carbon\Carbon::parse($session->session_date . ' ' . $endTime)->toIso8601String();
 
                         // Determine color: past (gray), ongoing (green), future (blue)
                         $now = now();
@@ -232,7 +579,6 @@ class UserController extends Controller
                             'start' => $startDateTime,
                             'end' => $endDateTime,
                             'allDay' => false,
-                            'color' => $color,
                         ];
                     }
                 }
@@ -263,11 +609,11 @@ class UserController extends Controller
                             $start = \Carbon\Carbon::parse($startDateTime);
                             $end = \Carbon\Carbon::parse($endDateTime);
                             if ($end->lt($now)) {
-                                $color = '#9ca3af'; // gray-400 for past
+                                $color = ''; // no color for past
                             } elseif ($start->lte($now) && $end->gte($now)) {
-                                $color = '#22c55e'; // green-500 for ongoing
+                                $color = ''; // no color for ongoing
                             } else {
-                                $color = '#2563eb'; // blue-600 for future
+                                $color = ''; // no color for future
                             }
 
                             $events[] = [
@@ -275,7 +621,6 @@ class UserController extends Controller
                                 'start' => $startDateTime,
                                 'end' => $endDateTime,
                                 'allDay' => false,
-                                'color' => $color,
                             ];
                         }
                     }
@@ -288,7 +633,8 @@ class UserController extends Controller
     public function tutorHome()
     {
         $user = auth()->user();
-        $sessions = [];
+        $upcomingSessions = [];
+        $allSessions = [];
 
         if ($user && $user->role === 'tutor') {
             $tutor = $user->tutor;
@@ -301,28 +647,91 @@ class UserController extends Controller
                     ->orderBy('session_date', 'asc')
                     ->get();
 
-                $sessions = $bookingSessions->map(function ($session) use ($tutor) {
+                $now = \Carbon\Carbon::now();
+
+                // Filter out past sessions based on session_date and session_time end for upcoming sessions
+                $upcomingSessionsCollection = $bookingSessions->filter(function ($session) use ($now) {
+                    $timeRanges = explode(',', $session->session_time);
+                    $lastTimeRange = trim(end($timeRanges));
+                    $timeParts = explode(' - ', $lastTimeRange);
+                    $endTime = isset($timeParts[1]) ? trim($timeParts[1]) : '23:59';
+                    $sessionEnd = \Carbon\Carbon::parse($session->session_date . ' ' . $endTime);
+                    return $sessionEnd->gte($now);
+                });
+
+                // Map upcoming sessions
+                $upcomingSessions = $upcomingSessionsCollection->map(function ($session) use ($tutor) {
                     $student = $session->student()->with('user')->first();
                     $studentUser = $student ? $student->user : null;
-                    
-                    // Calculate session status based on date and time
+
                     $sessionStatus = $this->calculateSessionStatus($session);
 
-                    // Override status to 'past' if session date is in the past, regardless of stored status
                     $now = \Carbon\Carbon::now();
                     $sessionDate = \Carbon\Carbon::parse($session->session_date);
                     if ($sessionDate->lt($now)) {
                         $sessionStatus = 'past';
                     }
 
-                    // Determine default payment method if missing
                     $paymentMethod = $session->payment_method;
                     if (empty($paymentMethod)) {
                         $paymentDetails = $tutor->payment_details;
                         if (is_string($paymentDetails)) {
                             $paymentDetailsArr = json_decode($paymentDetails, true);
                             if (json_last_error() !== JSON_ERROR_NONE) {
-                                // Not JSON, treat as comma separated string
+                                $paymentDetailsArr = array_map('trim', explode(',', $paymentDetails));
+                            }
+                        } elseif (is_array($paymentDetails)) {
+                            $paymentDetailsArr = $paymentDetails;
+                        } else {
+                            $paymentDetailsArr = [];
+                        }
+
+                        $paymentDetailsArr = array_filter($paymentDetailsArr);
+
+                        if (count($paymentDetailsArr) === 1) {
+                            $paymentMethod = $paymentDetailsArr[0];
+                        } elseif (in_array('Cash', $paymentDetailsArr)) {
+                            $paymentMethod = 'Cash';
+                        } elseif (count($paymentDetailsArr) > 0) {
+                            $paymentMethod = $paymentDetailsArr[0];
+                        } else {
+                            $paymentMethod = 'N/A';
+                        }
+                    }
+
+                    return (object)[
+                        'subject' => $session->subject_name ?? 'N/A',
+                        'date' => $session->session_date ?? 'N/A',
+                        'time' => $session->session_time ?? 'N/A',
+                        'id' => $session->id,
+                        'student_profile_image' => $studentUser ? $studentUser->profile_image : null,
+                        'student_name' => $studentUser ? $studentUser->full_name : 'N/A',
+                        'student_email' => $studentUser ? $studentUser->email : 'N/A',
+                        'total_price' => is_numeric($session->total_price) ? $session->total_price : 0,
+                        'payment_method' => $paymentMethod,
+                        'status' => $sessionStatus,
+                    ];
+                })->toArray();
+
+                // Map all sessions (including past)
+                $allSessions = $bookingSessions->map(function ($session) use ($tutor) {
+                    $student = $session->student()->with('user')->first();
+                    $studentUser = $student ? $student->user : null;
+
+                    $sessionStatus = $this->calculateSessionStatus($session);
+
+                    $now = \Carbon\Carbon::now();
+                    $sessionDate = \Carbon\Carbon::parse($session->session_date);
+                    if ($sessionDate->lt($now)) {
+                        $sessionStatus = 'past';
+                    }
+
+                    $paymentMethod = $session->payment_method;
+                    if (empty($paymentMethod)) {
+                        $paymentDetails = $tutor->payment_details;
+                        if (is_string($paymentDetails)) {
+                            $paymentDetailsArr = json_decode($paymentDetails, true);
+                            if (json_last_error() !== JSON_ERROR_NONE) {
                                 $paymentDetailsArr = array_map('trim', explode(',', $paymentDetails));
                             }
                         } elseif (is_array($paymentDetails)) {
@@ -360,7 +769,7 @@ class UserController extends Controller
             }
         }
 
-        return view('home_tutor', compact('sessions'));
+        return view('home_tutor', ['upcomingSessions' => $upcomingSessions, 'sessions' => $allSessions]);
     }
 
     /**
@@ -442,9 +851,12 @@ class UserController extends Controller
             $availability = $user->student->availability ?? [];
             return view('profile.student', ['user' => $user, 'availability' => $availability]);
         } elseif ($user->role === 'tutor') {
-            $availability = $user->tutor->availability ?? '[]';
-            if (is_string($availability)) {
-                $availability = json_decode($availability, true) ?: [];
+            $tutor = $user->tutor;
+            if ($tutor) {
+                $tutor = $this->filterTutorAvailability($tutor, $user->id);
+                $availability = $tutor->availability ?? [];
+            } else {
+                $availability = [];
             }
             return view('profile.tutor', ['user' => $user, 'availability' => $availability]);
         } else {
@@ -860,4 +1272,171 @@ class UserController extends Controller
 
         return response()->json($tutors);
     }
+
+    public function cancelSession(Request $request)
+    {
+        try {
+            $user = auth()->user();
+            if (!$user || !in_array($user->role, ['student', 'tutor'])) {
+                return response()->json(['error' => 'Unauthorized'], 401);
+            }
+
+            $sessionId = $request->input('session_id');
+            if (!$sessionId) {
+                return response()->json(['error' => 'Session ID is required'], 400);
+            }
+
+            $session = \App\Models\BookingSession::find($sessionId);
+            if (!$session) {
+                return response()->json(['error' => 'Session not found'], 404);
+            }
+
+            if ($user->role === 'student' && $session->student_id !== $user->student->id) {
+                return response()->json(['error' => 'Forbidden'], 403);
+            }
+
+            if ($user->role === 'tutor' && $session->tutor_id !== $user->tutor->id) {
+                return response()->json(['error' => 'Forbidden'], 403);
+            }
+
+            // Delete the session
+            $session->delete();
+
+            $now = now();
+
+            if ($user->role === 'student') {
+                // Fetch updated sessions for the student
+                $student = $user->student;
+                $sessions = \App\Models\BookingSession::where('student_id', $student->id)
+                    ->orderBy('session_date', 'asc')
+                    ->get()
+                    ->filter(function ($session) use ($now) {
+                        $sessionDate = \Carbon\Carbon::parse($session->session_date, 'Asia/Kuala_Lumpur');
+                        $timeRanges = explode(',', $session->session_time);
+                        $lastTimeRange = trim(end($timeRanges));
+                        $timeParts = explode(' - ', $lastTimeRange);
+                        $endTime = isset($timeParts[1]) ? trim($timeParts[1]) : '23:59';
+                        $sessionEnd = \Carbon\Carbon::parse($session->session_date . ' ' . $endTime, 'Asia/Kuala_Lumpur');
+                        return $sessionEnd->gte($now);
+                    })
+                    ->sort(function ($a, $b) {
+                        // First sort by date
+                        $dateComparison = strcmp($a->session_date, $b->session_date);
+                        if ($dateComparison !== 0) {
+                            return $dateComparison;
+                        }
+                        
+                        // If dates are the same, sort by start time
+                        $aTimeRanges = explode(',', $a->session_time);
+                        $bTimeRanges = explode(',', $b->session_time);
+                        
+                        $aFirstTime = trim($aTimeRanges[0] ?? '');
+                        $bFirstTime = trim($bTimeRanges[0] ?? '');
+                        
+                        $aStartTime = explode(' - ', $aFirstTime)[0] ?? '';
+                        $bStartTime = explode(' - ', $bFirstTime)[0] ?? '';
+                        
+                        // Convert to 24-hour format for comparison
+                        $aTime24 = \Carbon\Carbon::createFromFormat('g:i A', trim($aStartTime))->format('H:i');
+                        $bTime24 = \Carbon\Carbon::createFromFormat('g:i A', trim($bStartTime))->format('H:i');
+                        
+                        return strcmp($aTime24, $bTime24);
+                    })
+                    ->map(function ($session) {
+                        $tutor = $session->tutor()->with('user')->first();
+                        $tutorName = ($tutor && $tutor->user) ? $tutor->user->full_name : 'Tutor';
+
+                        // Calculate session status based on date and time
+                        $now = \Carbon\Carbon::now();
+                        $sessionDate = \Carbon\Carbon::parse($session->session_date);
+                        $timeRanges = explode(',', $session->session_time);
+                        $firstTimeRange = trim($timeRanges[0] ?? '');
+                        $timeParts = explode(' - ', $firstTimeRange);
+                        $startTime = isset($timeParts[0]) ? trim($timeParts[0]) : '00:00';
+                        $endTime = isset($timeParts[1]) ? trim($timeParts[1]) : '23:59';
+                        $sessionStart = \Carbon\Carbon::parse($session->session_date . ' ' . $startTime);
+                        $sessionEnd = \Carbon\Carbon::parse($session->session_date . ' ' . $endTime);
+
+                        if ($sessionEnd->lt($now)) {
+                            $status = 'past';
+                        } elseif ($sessionStart->lte($now) && $sessionEnd->gte($now)) {
+                            $status = 'ongoing';
+                        } else {
+                            $status = 'future';
+                        }
+
+                        return [
+                            'id' => $session->id,
+                            'subject' => $session->subject_name ?? 'N/A',
+                            'date' => $session->session_date ?? 'N/A',
+                            'time' => $session->session_time ?? 'N/A',
+                            'tutor_name' => $tutorName,
+                            'status' => $status,
+                        ];
+                    })->values()->all();
+            } else {
+                // Fetch updated sessions for the tutor
+                $tutor = $user->tutor;
+                $sessions = \App\Models\BookingSession::where('tutor_id', $tutor->id)
+                    ->orderBy('session_date', 'asc')
+                    ->get()
+                    ->map(function ($session) {
+                        $student = $session->student()->with('user')->first();
+                        $studentName = ($student && $student->user) ? $student->user->full_name : 'Student';
+                        $studentEmail = ($student && $student->user) ? $student->user->email : 'N/A';
+
+                        // Calculate session status based on date and time
+                        $now = \Carbon\Carbon::now();
+                        $sessionDate = \Carbon\Carbon::parse($session->session_date);
+                        $timeRanges = explode(',', $session->session_time);
+                        $firstTimeRange = trim($timeRanges[0] ?? '');
+                        $timeParts = explode(' - ', $firstTimeRange);
+                        $startTime = isset($timeParts[0]) ? trim($timeParts[0]) : '00:00';
+                        $endTime = isset($timeParts[1]) ? trim($timeParts[1]) : '23:59';
+                        $sessionStart = \Carbon\Carbon::parse($session->session_date . ' ' . $startTime);
+                        $sessionEnd = \Carbon\Carbon::parse($session->session_date . ' ' . $endTime);
+
+                        if ($sessionEnd->lt($now)) {
+                            $status = 'past';
+                        } elseif ($sessionStart->lte($now) && $sessionEnd->gte($now)) {
+                            $status = 'ongoing';
+                        } else {
+                            $status = 'future';
+                        }
+
+                        return [
+                            'id' => $session->id,
+                            'subject' => $session->subject_name ?? 'N/A',
+                            'date' => $session->session_date ?? 'N/A',
+                            'time' => $session->session_time ?? 'N/A',
+                            'student_name' => $studentName,
+                            'student_email' => $studentEmail,
+                            'status' => $status,
+                        ];
+                    })->values()->all();
+            }
+
+            // Fetch updated tutor availability for all tutors (optional optimization: only for tutors with sessions)
+            $tutors = \App\Models\Tutor::with('user')->get();
+            $updatedTutors = $tutors->map(function ($tutor) use ($user) {
+                $studentId = $user->student ? $user->student->id : null;
+                $tutor = $this->filterTutorAvailability($tutor, $studentId);
+                return [
+                    'id' => $tutor->id,
+                    'availability' => $tutor->availability,
+                ];
+            })->values()->all();
+
+            return response()->json([
+                'sessions' => $sessions,
+                'tutors' => $updatedTutors,
+            ]);
+        } catch (\Exception $e) {
+            \Log::error('Error in cancelSession: ' . $e->getMessage(), ['trace' => $e->getTraceAsString()]);
+            return response()->json(['error' => 'Server error occurred while cancelling session.'], 500);
+        }
+    }
 }
+
+
+

@@ -44,6 +44,16 @@
             background-color: #f9fafb;
             color: #1f2937;
         }
+        .fc-event-title {
+            color: black !important;
+            font-weight: bold !important;
+            font-size: 1rem !important;
+        }
+        .fc-event-time {
+            color: black !important;
+            font-weight: bold !important;
+            font-size: 1rem !important;
+        }
 
         /* Container */
         .container {
@@ -390,19 +400,55 @@
         </style>
 
         <div class="container" style="min-height: 100vh; display: flex; flex-direction: column; padding-left: 0; padding-right: 0;">
-            <div class="main-content" style="flex-grow: 1; width: 100%; max-width: 100%; margin: 0;">
-                <!-- My Schedule Title Above Calendar -->
-                <div class="my-schedule-title">My Tutoring Schedule</div>
+        <div class="main-content" style="flex-grow: 1; width: 100%; margin: 0; flex-direction: row; display: flex; gap: 20px;">
 
-                <!-- Calendar Section -->
-                <section aria-label="Calendar" style="background: white; border-radius: 15px; box-shadow: 0 2px 12px rgba(0,0,0,0.1); padding: 30px; flex: 1 1 100px; width: 700px; margin-left: auto; margin-right: auto;">
+           <div style="flex-basis: 60%; background: white; border-radius: 15px; box-shadow: 0 2px 12px rgba(0,0,0,0.1); padding: 30px; min-width: 0;">
+           <div class="my-schedule-title">My Schedule</div>     
+           <section aria-label="Calendar" style="width: 100%;">
                     <div id="calendar"></div>
                 </section>
+            </div>
 
+            <div style="flex-basis: 60%; background: white; border-radius: 15px; box-shadow: 0 2px 12px rgba(0,0,0,0.1); padding: 30px; min-width: 0;">
+                <div class="my-schedule-title">Upcoming Sessions</div>
+                @if (!empty($upcomingSessions) && count($upcomingSessions) > 0)
+                    <ul style="list-style: none; padding: 0; margin: 0;">
+                        @foreach ($upcomingSessions as $session)
+                            <li style="border-bottom: 1px solid #e5e7eb; padding: 15px 12px; margin-bottom: 10px; border-radius: 10px; background-color: #f3f4f6;">
+                                <div style="color: #1f2937; font-size: 1.2rem; margin-bottom: 6px;">
+                                    <strong>Date:</strong> {{ \Carbon\Carbon::parse($session->date)->format('d M Y') }}
+                                </div>
+                                <div style="font-size: 1rem; color: #374151; margin-bottom: 4px;">
+                                    <strong>Subject:</strong> {{ $session->subject }}
+                                </div>
+                                <div style="color: #374151; font-size: 1rem; margin-bottom: 4px;">
+                                    <strong>Time:</strong> {{ $session->time }}
+                                </div>
+                                <div style="color: #374151; font-size: 1rem;">
+                                    <strong>Student:</strong> {{ $session->student_name }}
+                                </div>
+                                <div style="color: #374151; font-size: 1rem;">
+                                    <strong>Email:</strong> {{ $session->student_email }}
+                                </div>
+                                <div style="margin-top: 10px; display: flex; gap: 10px;">
+                                    <button class="btn" style="background-color: #ef4444;" onclick="handleCancelSession({{ $session->id }})">Cancel</button>
+                                    <!-- Removed Reschedule button as per user request -->
+                                    <!-- <button class="btn" style="background-color: #3b82f6;" onclick="handleRescheduleSession({{ $session->id }})">Reschedule</button> -->
+                                </div>
+                            </li>
+                        @endforeach
+                    </ul>
+                @else
+                    <p style="color: #6b7280;">No upcoming sessions.</p>
+                @endif
+            </div>
+              </div>
+            
                 <!-- Tutoring Sessions Section -->
+                 <div style="width: 100%; margin-top: 30px;">
                 <div class="my-schedule-title">Your Tutoring Sessions</div>
                 <section class="featured-tutors" aria-label="Your Tutoring Sessions">
-                    @forelse($sessions as $session)
+                @forelse($sessions as $session)
                         <article class="tutor-card">
                             <div class="tutor-info" style="display: flex; align-items: center; gap: 20px;">
                                 {{-- Student Profile Image --}}
@@ -500,40 +546,304 @@
                         <div style="padding: 20px; color: #888;">No sessions scheduled.</div>
                     @endforelse
                 </section>
-            </div>
+
+        </div>
         </div>
 
         <script>
             document.addEventListener('DOMContentLoaded', function() {
-                var calendarEl = document.getElementById('calendar');
-                var calendar = new FullCalendar.Calendar(calendarEl, {
-                    initialView: 'dayGridMonth',
-                    events: '/api/calendar-events', // Adjust this URL to your API endpoint
-                    headerToolbar: {
-                        left: 'prev,next today',
-                        center: 'title',
-                        right: 'dayGridMonth,timeGridWeek,timeGridDay'
-                    },
-                    navLinks: true,
-                    editable: false,
-                    dayMaxEvents: true,
-                    eventClick: function(info) {
-                        info.jsEvent.preventDefault();
-                        const event = info.event;
+            var calendarEl = document.getElementById('calendar');
+            window.calendar = new FullCalendar.Calendar(calendarEl, {
+                initialView: 'dayGridMonth',
+                timeZone: 'Asia/Kuala_Lumpur',
+                events: '/api/calendar-events', // Make sure this endpoint returns the student's session bookings
+                headerToolbar: {
+                    left: 'prev,next today',
+                    center: 'title',
+                    right: 'dayGridMonth,timeGridWeek,timeGridDay'
+                },
+                navLinks: true,
+                editable: false,
+                dayMaxEvents: true,
+                eventDidMount: function(info) {
+                    // Use Malaysian time for comparison
+                    var now = new Date().toLocaleString("en-US", {timeZone: "Asia/Kuala_Lumpur"});
+                    var eventEnd = new Date(info.event.end).toLocaleString("en-US", {timeZone: "Asia/Kuala_Lumpur"});
+                    var nowDate = new Date(now);
+                    var eventEndDate = new Date(eventEnd);
+                    if (eventEndDate < nowDate) {
+                        // Past event - change background color to gray
+                        info.el.style.backgroundColor = '#9ca3af'; // gray-400
+                        info.el.style.borderColor = '#9ca3af';
+                        info.el.style.color = 'black'; // Change text color to black for past events
+                        // Remove dot if exists
+                        var dot = info.el.querySelector('.fc-event-dot');
+                        if (dot) {
+                            dot.remove();
+                        }
+                    } else {
+                        // Future event - ensure background is blue and no dot
+                        info.el.style.backgroundColor = '#82a4eeff'; // blue-600
+                        info.el.style.borderColor = '#82a4eeff';
+                        info.el.style.color = 'black'; // Change text color to black for future events
+                        var dot = info.el.querySelector('.fc-event-dot');
+                        if (dot) {
+                            dot.remove();
+                        }
+                    }
+                },
 
-                        // Show modal or prompt for session management
-                        const sessionId = event.id;
-                        const sessionTitle = event.title;
-                        const sessionDate = event.startStr;
-
-                        // For simplicity, confirm dialog for cancel or reschedule
-                        // Use a custom modal instead of prompt and alert
-                // Cancel session functionality removed as per user request
-            }
+            });
+            window.calendar.render();
         });
-        calendar.render();
-    });
-</script>
+        </script>
+
+        <script>
+            function updateSessionsList(sessions) {
+                // Updated selector to target the correct Upcoming Sessions <ul>
+                const sessionsContainer = document.querySelector('.my-schedule-title + ul');
+                if (!sessionsContainer) return;
+
+                if (sessions.length === 0) {
+                    sessionsContainer.innerHTML = '<p style="color: #6b7280;">No upcoming sessions.</p>';
+                    return;
+                }
+
+                let html = '';
+                sessions.forEach(session => {
+                    html += `
+                        <li style="border-bottom: 1px solid #e5e7eb; padding: 15px 12px; margin-bottom: 10px; border-radius: 10px; background-color: #f3f4f6;">
+                            <div style="color: #1f2937; font-size: 1.2rem; margin-bottom: 6px;">
+                                <strong>Date:</strong> ${new Date(session.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}
+                            </div>
+                            <div style="font-size: 1rem; color: #374151; margin-bottom: 4px;">
+                                <strong>Subject:</strong> ${session.subject}
+                            </div>
+                            <div style="color: #374151; font-size: 1rem; margin-bottom: 4px;">
+                                <strong>Time:</strong> ${session.time}
+                            </div>
+                            <div style="color: #374151; font-size: 1rem;">
+                                <strong>Student:</strong> ${session.student_name}
+                            </div>
+                            <div style="color: #374151; font-size: 1rem;">
+                                <strong>Email:</strong> ${session.student_email}
+                            </div>
+                            <div style="margin-top: 10px; display: flex; gap: 10px;">
+                                <button class="btn" style="background-color: #ef4444;" onclick="handleCancelSession(${session.id})">Cancel</button>
+                            </div>
+                        </li>
+                    `;
+                });
+
+                sessionsContainer.innerHTML = html;
+            }
+
+            function updateTutorSessionsList(sessions) {
+                const tutorSessionsContainer = document.querySelector('section.featured-tutors');
+                if (!tutorSessionsContainer) return;
+
+                if (sessions.length === 0) {
+                    tutorSessionsContainer.innerHTML = '<div style="padding: 20px; color: #888;">No sessions scheduled.</div>';
+                    return;
+                }
+
+                let html = '';
+                sessions.forEach(session => {
+                    const studentImageUrl = session.student_profile_image
+                        ? (session.student_profile_image.startsWith('http://') || session.student_profile_image.startsWith('https://')
+                            ? session.student_profile_image
+                            : `/storage/${session.student_profile_image}`)
+                        : `https://ui-avatars.com/api/?name=${encodeURIComponent(session.student_name || 'Student')}&background=random&color=fff`;
+
+                    let statusColor = '';
+                    if (session.status === 'past') {
+                        statusColor = 'color: #9ca3af;';
+                    } else if (session.status === 'ongoing') {
+                        statusColor = 'color: #22c55e;';
+                    } else {
+                        statusColor = 'color: #2563eb;';
+                    }
+
+                    html += `
+                        <article class="tutor-card">
+                            <div class="tutor-info" style="display: flex; align-items: center; gap: 20px;">
+                                <div>
+                                    <img src="${studentImageUrl}" alt="Student Image" class="w-20 h-20 rounded-full object-cover border border-gray-300" />
+                                </div>
+                                <div style="flex:1;">
+                                    <h3 class="tutor-name">Subject (${session.subject ?? 'N/A'})</h3>
+                                    <div class="tutor-details">
+                                        <p><span class="tutor-detail-label">Student:</span> ${session.student_name}</p>
+                                        <p><span class="tutor-detail-label">Email:</span> ${session.student_email ?? 'N/A'}</p>
+                                        <p><span class="tutor-detail-label">Date:</span> ${new Date(session.date).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}</p>
+                                        <p><span class="tutor-detail-label">Time:</span> ${session.time ?? 'N/A'}</p>
+                                        <p><span class="tutor-detail-label">Session Status:</span> <span style="${statusColor} font-weight: bold;">${session.status.charAt(0).toUpperCase() + session.status.slice(1)}</span></p>
+                                    </div>
+                                </div>
+                            </div>
+                        </article>
+                    `;
+                });
+
+                tutorSessionsContainer.innerHTML = html;
+            }
+
+            let sessionActionType = null;
+            let sessionActionId = null;
+            function showSessionActionModal(type, sessionId) {
+                sessionActionType = type;
+                sessionActionId = sessionId;
+                const modal = document.getElementById('sessionActionModal');
+                const title = document.getElementById('actionModalTitle');
+                const desc = document.getElementById('actionModalDesc');
+                if (type === 'cancel') {
+                    title.textContent = 'Cancel Session';
+                    desc.innerHTML = '<span style="font-size:1.2em;">Are you sure you want to <b style="color:#ef4444;">cancel</b> this session?</span><br><span style="color:#6366f1;">This action cannot be undone.</span>';
+                }
+                modal.style.display = 'flex';
+
+                // Remove previous event listeners
+                const yesBtn = document.getElementById('actionYes');
+                const noBtn = document.getElementById('actionNo');
+                yesBtn.replaceWith(yesBtn.cloneNode(true));
+                noBtn.replaceWith(noBtn.cloneNode(true));
+                const newYesBtn = document.getElementById('actionYes');
+                const newNoBtn = document.getElementById('actionNo');
+
+                newYesBtn.addEventListener('click', function() {
+                    if (sessionActionType === 'cancel') {
+                        fetch('{{ route('api.cancel.session') }}', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'X-CSRF-TOKEN': '{{ csrf_token() }}'
+                            },
+                            body: JSON.stringify({ session_id: sessionActionId })
+                        })
+                        .then(async response => {
+                            // Try to parse JSON, otherwise return error
+                            let data;
+                            try {
+                                data = await response.json();
+                            } catch (e) {
+                                data = { error: 'Session not found or server error.' };
+                            }
+                            return data;
+                        })
+                .then(data => {
+                    document.getElementById('actionModalButtons').style.display = 'none';
+                    document.getElementById('actionOkContainer').style.display = 'block';
+            if (data.error) {
+                title.textContent = 'Error';
+                desc.innerHTML = '<span style="color:#ef4444;font-size:1.1em;">' + data.error + '</span>';
+            } else {
+                title.textContent = 'Session Cancelled';
+                desc.innerHTML = '<span style="color:#10b981;font-size:1.2em;">Session ' + sessionActionId + ' has been cancelled.</span>';
+                // Filter sessions for upcoming (exclude past)
+                const upcomingSessions = data.sessions.filter(session => session.status !== 'past');
+                updateSessionsList(upcomingSessions);
+                updateTutorSessionsList(data.sessions);
+                if (data.tutors) {
+                    data.tutors.forEach(tutor => {
+                        updateTutorAvailabilityInUI(tutor.id, tutor.availability);
+                    });
+                }
+                if (window.calendar) {
+                    window.calendar.refetchEvents();
+                }
+            }
+
+            function updateTutorAvailabilityInUI(tutorId, updatedAvailability) {
+                // Update the featured tutors list availability display
+                const tutorCards = document.querySelectorAll('.tutor-card');
+                tutorCards.forEach(card => {
+                    const nameElem = card.querySelector('.tutor-name');
+                    if (nameElem && nameElem.textContent.includes(tutorId)) {
+                        const availabilityElem = card.querySelector('.tutor-detail-label.availability');
+                        if (availabilityElem) {
+                            if (updatedAvailability && updatedAvailability.length > 0) {
+                                let html = '<ul>';
+                                updatedAvailability.forEach(slot => {
+                                    const times = Array.isArray(slot.time) ? slot.time.join(', ') : slot.time;
+                                    html += `<li>Date: ${slot.date}<br>Time: ${times}</li>`;
+                                });
+                                html += '</ul>';
+                                availabilityElem.innerHTML = html;
+                            } else {
+                                availabilityElem.textContent = 'N/A';
+                            }
+                        }
+                    }
+                });
+
+                // Update the search dropdown availability if visible
+                const searchDropdown = document.getElementById('searchDropdown');
+                if (searchDropdown && searchDropdown.style.display === 'block') {
+                    const items = searchDropdown.children;
+                    for (let item of items) {
+                        if (item.textContent.includes(tutorId)) {
+                            const availabilityEl = item.querySelector('div:nth-child(3)');
+                            if (availabilityEl) {
+                                if (updatedAvailability && updatedAvailability.length > 0) {
+                                    const availabilityText = updatedAvailability.map(slot => {
+                                        const times = Array.isArray(slot.time) ? slot.time.join(', ') : slot.time;
+                                        return `${slot.date} (${times})`;
+                                    }).join('; ');
+                                    availabilityEl.textContent = 'Availability: ' + availabilityText;
+                                } else {
+                                    availabilityEl.textContent = 'Availability: N/A';
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+                        })
+                        .catch(error => {
+                            document.getElementById('actionModalButtons').style.display = 'none';
+                            document.getElementById('actionOkContainer').style.display = 'block';
+                            title.textContent = 'Error';
+                            desc.innerHTML = '<span style="color:#ef4444;font-size:1.1em;">Failed to cancel session. Please try again.</span>';
+                            console.error('Cancel session error:', error);
+                        });
+                    }
+                });
+                // OK button closes modal and resets buttons
+                const okBtn = document.getElementById('actionOkBtn');
+                if (okBtn) {
+                    okBtn.onclick = function() {
+                        modal.style.display = 'none';
+                        document.getElementById('actionOkContainer').style.display = 'none';
+                        document.getElementById('actionModalButtons').style.display = 'flex';
+                    };
+                }
+                newNoBtn.addEventListener('click', function() {
+                    modal.style.display = 'none';
+                });
+            }
+
+            function handleCancelSession(sessionId) {
+                showSessionActionModal('cancel', sessionId);
+            }
+
+            // Removed handleRescheduleSession function as reschedule button is removed
+        </script>
+
+        <!-- Session Action Modal -->
+        <div id="sessionActionModal" role="dialog" aria-modal="true" aria-labelledby="actionModalTitle" aria-describedby="actionModalDesc" style="display:none; position: fixed; z-index: 10000; left: 0; top: 0; width: 100vw; height: 100vh; background-color: rgba(0,0,0,0.5); align-items: center; justify-content: center;">
+            <div class="modal-content" style="background-color: #fff; margin: auto; padding: 30px 40px; border-radius: 16px; max-width: 420px; box-shadow: 0 6px 24px rgba(99,102,241,0.25); text-align: center; font-family: Arial, sans-serif;">
+                <div id="actionModalTitle" class="modal-title" style="font-size: 1.5rem; font-weight: 700; color: #6366f1; margin-bottom: 12px;"></div>
+                <div id="actionModalDesc" class="modal-message" style="margin-bottom: 24px; font-size: 1.1rem; color: #333;"></div>
+                <div class="modal-buttons" id="actionModalButtons" style="display: flex; justify-content: center; gap: 24px;">
+                    <button id="actionYes" type="button" style="padding: 12px 32px; border: none; border-radius: 10px; font-size: 1.1rem; cursor: pointer; font-weight: 700; background-color: #6366f1; color: white;">Yes</button>
+                    <button id="actionNo" type="button" style="padding: 12px 32px; border: none; border-radius: 10px; font-size: 1.1rem; cursor: pointer; font-weight: 700; background-color: #e0e0e0; color: #333;">No</button>
+                </div>
+                <div id="actionOkContainer" style="display: none; margin-top: 24px;">
+                    <button id="actionOkBtn" type="button" style="padding: 12px 32px; border: none; border-radius: 10px; font-size: 1.1rem; cursor: pointer; font-weight: 700; background-color: #6366f1; color: white;">OK</button>
+                </div>
+            </div>
+        </div>
+
         @endsection
     </div>
 </body>

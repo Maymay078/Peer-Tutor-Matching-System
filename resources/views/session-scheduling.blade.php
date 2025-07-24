@@ -420,14 +420,14 @@ function generateCalendar() {
     function selectDate(dateStr) {
         selectedDate = dateStr;
         dateElement.value = new Date(dateStr).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
-        // Only disable Book Session button if tutor has availability
-        if (isTutorAvailable()) {
-            const bookBtn = document.getElementById('book-session-btn');
-            if (bookBtn) {
-                bookBtn.disabled = true;
-                bookBtn.classList.add('disabled');
-            }
+        
+        // Always disable Book Session button when selecting a new date
+        const bookBtn = document.getElementById('book-session-btn');
+        if (bookBtn) {
+            bookBtn.disabled = true;
+            bookBtn.classList.add('disabled');
         }
+        
         // Only update time slots if the date is different from the last selected date
         if (lastSelectedDate !== dateStr) {
             populateTimeSlots(dateStr);
@@ -733,6 +733,33 @@ document.getElementById('prev-month-btn').addEventListener('click', () => {
         } catch (error) {
             console.error('Error checking availability:', error);
         }
+
+        // For tutors without availability, apply Malaysian time filtering
+        if (Object.keys(tutor.availability).length === 0) {
+            // Get current Malaysian time
+            const nowMalaysia = new Date().toLocaleString("en-US", {timeZone: "Asia/Kuala_Lumpur"});
+            const currentDate = new Date(nowMalaysia);
+            const currentHour = currentDate.getHours();
+            const isoCurrentDate = currentDate.toISOString().split('T')[0];
+            
+            // For current date, only show slots that are in the future
+            if (dateStr === isoCurrentDate) {
+                times = times.filter(timeSlot => {
+                    const slotStartTime = timeSlot.split(' - ')[0];
+                    const slotStartHour = parseInt(slotStartTime.split(':')[0]);
+                    const slotIsPM = slotStartTime.includes('PM');
+                    let slotHour24 = slotStartHour;
+                    if (slotIsPM && slotStartHour !== 12) {
+                        slotHour24 += 12;
+                    } else if (!slotIsPM && slotStartHour === 12) {
+                        slotHour24 = 0;
+                    }
+                    
+                    return slotHour24 > currentHour;
+                });
+            }
+        }
+
         if (times.length === 0) {
             if (timeElement) {
                 timeElement.parentNode.removeChild(timeElement);
@@ -741,6 +768,7 @@ document.getElementById('prev-month-btn').addEventListener('click', () => {
             selectedTime = '';
             return;
         }
+        
         // Only recreate the dropdown if it doesn't exist or if the available times have changed
         let currentTimes = [];
         if (timeElement && timeElement.classList && timeElement.classList.contains('relative')) {
@@ -905,8 +933,12 @@ function generateFullCalendar() {
     let calendarHtml = '<tbody>';
 
     let date = 1;
-    const today = new Date();
+    
+    // Get current Malaysian time
+    const nowMalaysia = new Date().toLocaleString("en-US", {timeZone: "Asia/Kuala_Lumpur"});
+    const today = new Date(nowMalaysia);
     today.setHours(0,0,0,0);
+    
     for (let week = 0; week < 6; week++) {
         calendarHtml += '<tr>';
         for (let day = 0; day < 7; day++) {
@@ -919,18 +951,47 @@ function generateFullCalendar() {
             currentDate.setHours(0,0,0,0);
             const isToday = today.getTime() === currentDate.getTime();
             const isPast = currentDate < today;
+            
             let classes = '';
             let onclickAttr = '';
+            
             if (isPast) {
                 classes = 'text-gray-400 cursor-not-allowed';
             } else {
-                classes = 'cursor-pointer';
-                onclickAttr = `selectDate('${dateStr}')`;
+                // For current date, check if there are any available time slots
+                if (isToday) {
+                    const currentHour = new Date(nowMalaysia).getHours();
+                    const timeSlots = generateTimeSlots();
+                    const hasAvailableSlots = timeSlots.some(slot => {
+                        const slotStartTime = slot.split(' - ')[0];
+                        const slotStartHour = parseInt(slotStartTime.split(':')[0]);
+                        const slotIsPM = slotStartTime.includes('PM');
+                        let slotHour24 = slotStartHour;
+                        if (slotIsPM && slotStartHour !== 12) {
+                            slotHour24 += 12;
+                        } else if (!slotIsPM && slotStartHour === 12) {
+                            slotHour24 = 0;
+                        }
+                        return slotHour24 > currentHour;
+                    });
+                    
+                    if (hasAvailableSlots) {
+                        classes = 'cursor-pointer';
+                        onclickAttr = `selectDate('${dateStr}')`;
+                    } else {
+                        classes = 'text-gray-400 cursor-not-allowed';
+                    }
+                } else {
+                    classes = 'cursor-pointer';
+                    onclickAttr = `selectDate('${dateStr}')`;
+                }
             }
+            
             if (isToday) {
                 classes += ' bg-yellow-200';
             }
-            calendarHtml += `<td class="${classes}" ${onclickAttr ? `onclick=\"${onclickAttr}\"` : ''}>${date}</td>`;
+
+            calendarHtml += `<td class="${classes}" ${onclickAttr ? `onclick="${onclickAttr}"` : ''}>${date}</td>`;
             date++;
         }
         calendarHtml += '</tr>';

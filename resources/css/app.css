@@ -1,5 +1,8 @@
-/* Main CSS file for the application */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
+/* Custom styles */
 body {
     font-family: Arial, sans-serif;
     background-color: #f8fafc;

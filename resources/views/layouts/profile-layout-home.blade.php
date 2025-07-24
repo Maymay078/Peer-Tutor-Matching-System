@@ -24,8 +24,8 @@
 
         <!-- Page Heading -->
         @hasSection('header')
-        <header class="bg-indigo-600 shadow py-4 px-6">
-    <div class="max-w-5xl mx-auto flex justify-between items-center space-x-32">
+<header class="bg-indigo-600 shadow py-4 px-6">
+    <div class="max-w-full mx-auto flex justify-between items-center space-x-32">
         
         <!-- Left: Username -->
         <div class="text-white font-bold text-lg">

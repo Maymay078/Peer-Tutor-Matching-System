@@ -38,63 +38,114 @@ class BulkUserSeeder extends Seeder
             ['name' => 'Business Studies', 'price_per_hour' => 18],
         ];
 
-        $sharedAvailabilityArray = [
-            ['date' => '2025-07-10', 'time' => ['9:00 AM - 10:00 AM', '10:00 AM - 11:00 AM']],
-            ['date' => '2025-07-20', 'time' => ['1:00 PM - 2:00 PM']],
-            ['date' => '2025-07-25', 'time' => ['3:00 PM - 4:00 PM']],
-            ['date' => '2025-08-01', 'time' => ['9:00 AM - 10:00 AM']],
-            ['date' => '2025-08-05', 'time' => ['2:00 PM - 3:00 PM']],
-        ];
+        // Generate dynamic availability dates with more dates in August
+        $today = \Carbon\Carbon::today();
+        $sharedAvailabilityArray = [];
+
+        // Add dates from July 28 to July 31
+        $startJuly = \Carbon\Carbon::create(2025, 7, 28);
+        $endJuly = \Carbon\Carbon::create(2025, 7, 31);
+        for ($date = $startJuly->copy(); $date->lte($endJuly); $date->addDay()) {
+            if ($date->gte($today)) {
+                $sharedAvailabilityArray[] = ['date' => $date->toDateString(), 'time' => ['9:00 AM - 10:00 AM', '10:00 AM - 11:00 AM']];
+            }
+        }
+
+        // Add more dates in August from August 1 to August 30
+        $startAugust = \Carbon\Carbon::create(2025, 8, 1);
+        $endAugust = \Carbon\Carbon::create(2025, 8, 30);
+        for ($date = $startAugust->copy(); $date->lte($endAugust); $date->addDay()) {
+            if ($date->gte($today)) {
+                $sharedAvailabilityArray[] = ['date' => $date->toDateString(), 'time' => ['9:00 AM - 10:00 AM', '10:00 AM - 11:00 AM']];
+            }
+        }
 
         $sharedAvailability = json_encode($sharedAvailabilityArray);
 
-        // Create 20 students
-        User::factory()
-            ->count(20)
-            ->state(['role' => 'student', 'password' => bcrypt('Password@123')])
-            ->create()
-            ->each(function ($user, $index) use ($subjectsList) {
-                
-                // Assign preferred subjects (1 to 5), ensuring at least one matches tutor subjects
-                $preferredSubjectsCount = rand(1, 5);
-                $preferredSubjects = [];
-                for ($i = 0; $i < $preferredSubjectsCount; $i++) {
-                    $preferredSubjects[] = $subjectsList[array_rand($subjectsList)]['name'];
-                }
-                $preferredSubjects = array_unique($preferredSubjects);
+        // Removed first batch of 20 students creation to avoid duplication and ensure control in second batch
 
-                Student::factory()->create([
-                    'user_id' => $user->id,
-                    'preferred_course' => json_encode($preferredSubjects),
-                ]);
-            });
 
             // Create 20 tutors
             $tutors = User::factory()
                 ->count(20)
                 ->state(['role' => 'tutor', 'password' => bcrypt('Password@123')])
                 ->create()
-                ->each(function ($user, $index) use ($subjectsList, $sharedAvailability) {
+                ->each(function ($user, $index) use ($subjectsList, $sharedAvailability, $today) {
                 $availability = null;
                 // For some tutors, add availability data
                 if ($index % 6 == 0) {
-                    $availabilityArray = json_decode($sharedAvailability, true);
+                    // Randomly select between 3 to 5 availability dates from July 30 to August 31
+                    $availabilityArray = [];
+                    $startDate = \Carbon\Carbon::create(2025, 7, 30);
+                    $endDate = \Carbon\Carbon::create(2025, 8, 31);
+                    $allDates = [];
+                    for ($date = $startDate->copy(); $date->lte($endDate); $date->addDay()) {
+                        $allDates[] = $date->toDateString();
+                    }
+                    shuffle($allDates);
+                    $numDates = rand(3, 5);
+                    $selectedDates = array_slice($allDates, 0, $numDates);
+                    $timeSlotsPool = [
+                        '9:00 AM - 10:00 AM',
+                        '10:00 AM - 11:00 AM',
+                        '11:00 AM - 12:00 PM',
+                        '1:00 PM - 2:00 PM',
+                        '2:00 PM - 3:00 PM',
+                        '3:00 PM - 4:00 PM',
+                        '4:00 PM - 5:00 PM',
+                    ];
+                    foreach ($selectedDates as $date) {
+                        // Randomly select 3 to 5 time slots for each date
+                        shuffle($timeSlotsPool);
+                        $numTimeSlots = rand(3, 5);
+                        $timeSlots = array_slice($timeSlotsPool, 0, $numTimeSlots);
+                        $availabilityArray[] = ['date' => $date, 'time' => $timeSlots];
+                    }
                 } elseif ($index % 6 == 1) {
-                    $availabilityArray = [
-                        ['date' => '2025-07-08', 'time' => ['9:00 AM - 10:00 AM', '10:00 AM - 11:00 AM']],
-                        ['date' => '2025-07-22', 'time' => ['1:00 PM - 2:00 PM']],
-                    ];
+                    // Randomly select between 3 to 5 availability dates from July 30 to August 31
+                    $availabilityArray = [];
+                    $startDate = \Carbon\Carbon::create(2025, 7, 30);
+                    $endDate = \Carbon\Carbon::create(2025, 8, 31);
+                    $allDates = [];
+                    for ($date = $startDate->copy(); $date->lte($endDate); $date->addDay()) {
+                        $allDates[] = $date->toDateString();
+                    }
+                    shuffle($allDates);
+                    $numDates = rand(3, 5);
+                    $selectedDates = array_slice($allDates, 0, $numDates);
+                    foreach ($selectedDates as $date) {
+                        $availabilityArray[] = ['date' => $date, 'time' => ['9:00 AM - 10:00 AM', '10:00 AM - 11:00 AM']];
+                    }
                 } elseif ($index % 6 == 2) {
-                    $availabilityArray = [
-                        ['date' => '2025-08-03', 'time' => ['11:00 AM - 12:00 PM', '12:00 PM - 1:00 PM']],
-                        ['date' => '2025-08-17', 'time' => ['3:00 PM - 4:00 PM']],
-                    ];
+                    // Randomly select between 3 to 5 availability dates from July 30 to August 31
+                    $availabilityArray = [];
+                    $startDate = \Carbon\Carbon::create(2025, 7, 30);
+                    $endDate = \Carbon\Carbon::create(2025, 8, 31);
+                    $allDates = [];
+                    for ($date = $startDate->copy(); $date->lte($endDate); $date->addDay()) {
+                        $allDates[] = $date->toDateString();
+                    }
+                    shuffle($allDates);
+                    $numDates = rand(3, 5);
+                    $selectedDates = array_slice($allDates, 0, $numDates);
+                    foreach ($selectedDates as $date) {
+                        $availabilityArray[] = ['date' => $date, 'time' => ['11:00 AM - 12:00 PM', '12:00 PM - 1:00 PM']];
+                    }
                 } elseif ($index % 6 == 3) {
-                    $availabilityArray = [
-                        ['date' => '2025-07-15', 'time' => ['8:00 AM - 9:00 AM']],
-                        ['date' => '2025-07-22', 'time' => ['2:00 PM - 3:00 PM']],
-                        ['date' => '2025-08-07', 'time' => ['4:00 PM - 5:00 PM']],
-                    ];
+                    // Randomly select between 3 to 5 availability dates from July 30 to August 31
+                    $availabilityArray = [];
+                    $startDate = \Carbon\Carbon::create(2025, 7, 30);
+                    $endDate = \Carbon\Carbon::create(2025, 8, 31);
+                    $allDates = [];
+                    for ($date = $startDate->copy(); $date->lte($endDate); $date->addDay()) {
+                        $allDates[] = $date->toDateString();
+                    }
+                    shuffle($allDates);
+                    $numDates = rand(3, 5);
+                    $selectedDates = array_slice($allDates, 0, $numDates);
+                    foreach ($selectedDates as $date) {
+                        $availabilityArray[] = ['date' => $date, 'time' => ['8:00 AM - 9:00 AM']];
+                    }
                 } elseif ($index % 6 == 4) {
                     $availabilityArray = [];
                 } else {
@@ -146,7 +197,7 @@ class BulkUserSeeder extends Seeder
                 });
 
         // Create 20 students with preferred subjects overlapping tutors' expertise
-        $overlapCounts = [5, 4, 3, 2, 1];
+        $overlapCounts = [1, 2, 2, 3, 3, 3, 4, 5]; // More 2s and 3s, fewer 1s and 4s, some 5s
         $tutorExpertiseSubjects = [];
 
         // Collect all tutors' expertise subjects
@@ -176,12 +227,23 @@ class BulkUserSeeder extends Seeder
                 // Select subjects to overlap
                 $overlapSubjects = array_slice($randomTutorSubjects, 0, $overlapCount);
 
-                // Fill the rest of preferred subjects randomly from subjectsList if needed
+                // Ensure at least 2 subjects total for the student
+                $minSubjects = 2;
                 $allSubjectNames = array_column($subjectsList, 'name');
-                $remainingCount = max(0, rand(1, 5) - count($overlapSubjects));
+                $remainingCount = max(0, $minSubjects - count($overlapSubjects));
                 $randomSubjects = [];
 
                 while (count($randomSubjects) < $remainingCount) {
+                    $subject = $allSubjectNames[array_rand($allSubjectNames)];
+                    if (!in_array($subject, $overlapSubjects) && !in_array($subject, $randomSubjects)) {
+                        $randomSubjects[] = $subject;
+                    }
+                }
+
+                // Add additional random subjects up to a max of 5 total subjects
+                $maxSubjects = 5;
+                $additionalCount = rand(0, $maxSubjects - $minSubjects);
+                while (count($randomSubjects) < $remainingCount + $additionalCount) {
                     $subject = $allSubjectNames[array_rand($allSubjectNames)];
                     if (!in_array($subject, $overlapSubjects) && !in_array($subject, $randomSubjects)) {
                         $randomSubjects[] = $subject;
@@ -197,9 +259,11 @@ class BulkUserSeeder extends Seeder
             });
 
         // Seed booking sessions and feedback for all tutors
+        $now = now();
+        $studentIds = Student::pluck('id')->toArray();
+
         foreach ($tutors as $tutorUser) {
             $expertise = json_decode($tutorUser->tutor->expertise, true);
-            $studentIds = Student::pluck('id')->toArray();
             $subjects = array_column($expertise, 'name');
 
             // Number of sessions proportional to number of expertise subjects, minimum 1, max 5
@@ -214,15 +278,39 @@ class BulkUserSeeder extends Seeder
                 $studentId = $studentIds[array_rand($studentIds)];
                 $subjectName = $subjects[array_rand($subjects)];
 
-                // For past sessions, date is in the past
-                if (rand(0, 1) === 0) {
-                    $sessionDate = now()->subDays(rand(1, 30))->toDateString();
-                    $status = 'past';
+                // Determine session type for student: past, future, both, or none
+                // Randomly assign session type per student
+                $sessionTypeOptions = ['past', 'future', 'both', 'none'];
+                $sessionType = $sessionTypeOptions[array_rand($sessionTypeOptions)];
+
+                // Generate session dates based on session type
+                $sessionDates = [];
+
+                if ($sessionType === 'past') {
+                    // Past session date: between 1 and 30 days ago
+                    $sessionDates[] = $now->copy()->subDays(rand(1, 30))->toDateString();
+                } elseif ($sessionType === 'future') {
+                    // Future session date: between tomorrow and end of August 2025
+                    $futureDatesPool = [
+                        '2025-07-23', '2025-07-25', '2025-07-28', '2025-07-30',
+                        '2025-08-01', '2025-08-05', '2025-08-10', '2025-08-15',
+                        '2025-08-20', '2025-08-25', '2025-08-30'
+                    ];
+                    $sessionDates[] = $futureDatesPool[array_rand($futureDatesPool)];
+                } elseif ($sessionType === 'both') {
+                    // One past and one future session
+                    $sessionDates[] = $now->copy()->subDays(rand(1, 30))->toDateString();
+                    $futureDatesPool = [
+                        '2025-07-23', '2025-07-25', '2025-07-28', '2025-07-30',
+                        '2025-08-01', '2025-08-05', '2025-08-10', '2025-08-15',
+                        '2025-08-20', '2025-08-25', '2025-08-30'
+                    ];
+                    $sessionDates[] = $futureDatesPool[array_rand($futureDatesPool)];
                 } else {
-                    // For future sessions, date is no earlier than 2025-07-20
-                    $sessionDate = now()->addDays(rand(1, 30))->toDateString();
-                    $status = 'future';
+                    // none - skip creating session
+                    continue;
                 }
+
                 $sessionTime = '10:00 AM - 11:00 AM';
 
                 // Calculate total price based on tutor's expertise price for the subject
@@ -235,29 +323,45 @@ class BulkUserSeeder extends Seeder
                 }
                 $totalPrice = $pricePerHour;
 
-                $bookingSession = BookingSession::create([
-                    'student_id' => $studentId,
-                    'tutor_id' => $tutorUser->tutor->id,
-                    'subject_name' => $subjectName,
-                    'session_date' => $sessionDate,
-                    'session_time' => $sessionTime,
-                    'total_price' => $totalPrice,
-                    'status' => $status,
-                ]);
+                foreach ($sessionDates as $sessionDate) {
+                    $status = $now->toDateString() > $sessionDate ? 'past' : 'future';
 
-                // Seed feedback for past sessions only
-                if ($status === 'past') {
-                    $studentUserId = Student::find($studentId)->user_id;
-                    $tutorUserId = $tutorUser->id;
-
-                    // Feedback from student to tutor only (tutors only receive feedback)
-                    Feedback::create([
-                        'booking_session_id' => $bookingSession->id,
-                        'from_user_id' => $studentUserId,
-                        'to_user_id' => $tutorUserId,
-                        'rating' => rand(3, 5),
-                        'comment' => 'Great session with the tutor.',
+                    $bookingSession = BookingSession::create([
+                        'student_id' => $studentId,
+                        'tutor_id' => $tutorUser->tutor->id,
+                        'subject_name' => $subjectName,
+                        'session_date' => $sessionDate,
+                        'session_time' => $sessionTime,
+                        'total_price' => $totalPrice,
+                        'status' => $status,
                     ]);
+
+                    // Seed feedback for past sessions only, for both student and tutor
+                    if ($status === 'past') {
+                        $studentUserId = Student::find($studentId)->user_id;
+                        $tutorUserId = $tutorUser->id;
+
+                        $rating = rand(3, 5);
+                        $comment = 'Great session with the tutor.';
+
+                        // Feedback from student to tutor
+                        Feedback::create([
+                            'booking_session_id' => $bookingSession->id,
+                            'from_user_id' => $studentUserId,
+                            'to_user_id' => $tutorUserId,
+                            'rating' => $rating,
+                            'comment' => $comment,
+                        ]);
+
+                        // Feedback from tutor to student
+                        Feedback::create([
+                            'booking_session_id' => $bookingSession->id,
+                            'from_user_id' => $tutorUserId,
+                            'to_user_id' => $studentUserId,
+                            'rating' => $rating,
+                            'comment' => 'Great session with the student.',
+                        ]);
+                    }
                 }
             }
         }
