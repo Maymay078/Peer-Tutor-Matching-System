@@ -642,10 +642,33 @@ class UserController extends Controller
                 // Update booking session statuses based on current date
                 $this->updateBookingSessionStatuses($tutor->id);
 
-                // Fetch booking sessions for the tutor
+                // Fetch booking sessions for the tutor with sorting
                 $bookingSessions = \App\Models\BookingSession::where('tutor_id', $tutor->id)
                     ->orderBy('session_date', 'asc')
-                    ->get();
+                    ->get()
+                    ->sort(function ($a, $b) {
+                        // First sort by date
+                        $dateComparison = strcmp($a->session_date, $b->session_date);
+                        if ($dateComparison !== 0) {
+                            return $dateComparison;
+                        }
+                        
+                        // If dates are the same, sort by start time
+                        $aTimeRanges = explode(',', $a->session_time);
+                        $bTimeRanges = explode(',', $b->session_time);
+                        
+                        $aFirstTime = trim($aTimeRanges[0] ?? '');
+                        $bFirstTime = trim($bTimeRanges[0] ?? '');
+                        
+                        $aStartTime = explode(' - ', $aFirstTime)[0] ?? '';
+                        $bStartTime = explode(' - ', $bFirstTime)[0] ?? '';
+                        
+                        // Convert to 24-hour format for comparison
+                        $aTime24 = \Carbon\Carbon::createFromFormat('g:i A', trim($aStartTime))->format('H:i');
+                        $bTime24 = \Carbon\Carbon::createFromFormat('g:i A', trim($bStartTime))->format('H:i');
+                        
+                        return strcmp($aTime24, $bTime24);
+                    });
 
                 $now = \Carbon\Carbon::now();
 
@@ -672,33 +695,6 @@ class UserController extends Controller
                         $sessionStatus = 'past';
                     }
 
-                    $paymentMethod = $session->payment_method;
-                    if (empty($paymentMethod)) {
-                        $paymentDetails = $tutor->payment_details;
-                        if (is_string($paymentDetails)) {
-                            $paymentDetailsArr = json_decode($paymentDetails, true);
-                            if (json_last_error() !== JSON_ERROR_NONE) {
-                                $paymentDetailsArr = array_map('trim', explode(',', $paymentDetails));
-                            }
-                        } elseif (is_array($paymentDetails)) {
-                            $paymentDetailsArr = $paymentDetails;
-                        } else {
-                            $paymentDetailsArr = [];
-                        }
-
-                        $paymentDetailsArr = array_filter($paymentDetailsArr);
-
-                        if (count($paymentDetailsArr) === 1) {
-                            $paymentMethod = $paymentDetailsArr[0];
-                        } elseif (in_array('Cash', $paymentDetailsArr)) {
-                            $paymentMethod = 'Cash';
-                        } elseif (count($paymentDetailsArr) > 0) {
-                            $paymentMethod = $paymentDetailsArr[0];
-                        } else {
-                            $paymentMethod = 'N/A';
-                        }
-                    }
-
                     return (object)[
                         'subject' => $session->subject_name ?? 'N/A',
                         'date' => $session->session_date ?? 'N/A',
@@ -708,51 +704,18 @@ class UserController extends Controller
                         'student_name' => $studentUser ? $studentUser->full_name : 'N/A',
                         'student_email' => $studentUser ? $studentUser->email : 'N/A',
                         'total_price' => is_numeric($session->total_price) ? $session->total_price : 0,
-                        'payment_method' => $paymentMethod,
+                        'payment_method' => $paymentMethod ?? 'N/A',
                         'status' => $sessionStatus,
                     ];
                 })->toArray();
 
-                // Map all sessions (including past)
+                // All sessions (for "Your Tutoring Sessions" section) - also sorted
                 $allSessions = $bookingSessions->map(function ($session) use ($tutor) {
                     $student = $session->student()->with('user')->first();
                     $studentUser = $student ? $student->user : null;
 
                     $sessionStatus = $this->calculateSessionStatus($session);
 
-                    $now = \Carbon\Carbon::now();
-                    $sessionDate = \Carbon\Carbon::parse($session->session_date);
-                    if ($sessionDate->lt($now)) {
-                        $sessionStatus = 'past';
-                    }
-
-                    $paymentMethod = $session->payment_method;
-                    if (empty($paymentMethod)) {
-                        $paymentDetails = $tutor->payment_details;
-                        if (is_string($paymentDetails)) {
-                            $paymentDetailsArr = json_decode($paymentDetails, true);
-                            if (json_last_error() !== JSON_ERROR_NONE) {
-                                $paymentDetailsArr = array_map('trim', explode(',', $paymentDetails));
-                            }
-                        } elseif (is_array($paymentDetails)) {
-                            $paymentDetailsArr = $paymentDetails;
-                        } else {
-                            $paymentDetailsArr = [];
-                        }
-
-                        $paymentDetailsArr = array_filter($paymentDetailsArr);
-
-                        if (count($paymentDetailsArr) === 1) {
-                            $paymentMethod = $paymentDetailsArr[0];
-                        } elseif (in_array('Cash', $paymentDetailsArr)) {
-                            $paymentMethod = 'Cash';
-                        } elseif (count($paymentDetailsArr) > 0) {
-                            $paymentMethod = $paymentDetailsArr[0];
-                        } else {
-                            $paymentMethod = 'N/A';
-                        }
-                    }
-
                     return (object)[
                         'subject' => $session->subject_name ?? 'N/A',
                         'date' => $session->session_date ?? 'N/A',
@@ -762,7 +725,7 @@ class UserController extends Controller
                         'student_name' => $studentUser ? $studentUser->full_name : 'N/A',
                         'student_email' => $studentUser ? $studentUser->email : 'N/A',
                         'total_price' => is_numeric($session->total_price) ? $session->total_price : 0,
-                        'payment_method' => $paymentMethod,
+                        'payment_method' => $paymentMethod ?? 'N/A',
                         'status' => $sessionStatus,
                     ];
                 })->toArray();
@@ -1384,25 +1347,9 @@ class UserController extends Controller
                         $student = $session->student()->with('user')->first();
                         $studentName = ($student && $student->user) ? $student->user->full_name : 'Student';
                         $studentEmail = ($student && $student->user) ? $student->user->email : 'N/A';
+                        $studentProfileImage = ($student && $student->user) ? $student->user->profile_image : null;
 
-                        // Calculate session status based on date and time
-                        $now = \Carbon\Carbon::now();
-                        $sessionDate = \Carbon\Carbon::parse($session->session_date);
-                        $timeRanges = explode(',', $session->session_time);
-                        $firstTimeRange = trim($timeRanges[0] ?? '');
-                        $timeParts = explode(' - ', $firstTimeRange);
-                        $startTime = isset($timeParts[0]) ? trim($timeParts[0]) : '00:00';
-                        $endTime = isset($timeParts[1]) ? trim($timeParts[1]) : '23:59';
-                        $sessionStart = \Carbon\Carbon::parse($session->session_date . ' ' . $startTime);
-                        $sessionEnd = \Carbon\Carbon::parse($session->session_date . ' ' . $endTime);
-
-                        if ($sessionEnd->lt($now)) {
-                            $status = 'past';
-                        } elseif ($sessionStart->lte($now) && $sessionEnd->gte($now)) {
-                            $status = 'ongoing';
-                        } else {
-                            $status = 'future';
-                        }
+                        $sessionStatus = $this->calculateSessionStatus($session);
 
                         return [
                             'id' => $session->id,
@@ -1411,7 +1358,8 @@ class UserController extends Controller
                             'time' => $session->session_time ?? 'N/A',
                             'student_name' => $studentName,
                             'student_email' => $studentEmail,
-                            'status' => $status,
+                            'student_profile_image' => $studentProfileImage,
+                            'status' => $sessionStatus,
                         ];
                     })->values()->all();
             }
@@ -1437,6 +1385,9 @@ class UserController extends Controller
         }
     }
 }
+
+
+
 
 
 

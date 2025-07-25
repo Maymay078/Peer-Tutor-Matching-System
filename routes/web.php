@@ -109,4 +109,12 @@ Route::middleware(['auth', AdminMiddleware::class])->group(function () {
     Route::get('/admin/profile', function () {
         return view('admin.profile');
     })->name('admin.profile');
+
+    // User management routes
+    Route::delete('/admin/users/{user}', [App\Http\Controllers\AdminController::class, 'deleteUser'])->name('admin.users.delete');
+    Route::post('/admin/users/bulk-delete', [App\Http\Controllers\AdminController::class, 'bulkDeleteUsers'])->name('admin.users.bulk-delete');
+
+    // Report routes
+    Route::post('/admin/reports/data', [App\Http\Controllers\AdminController::class, 'getReportData'])->name('admin.reports.data');
+    Route::get('/admin/reports/export/{format}', [App\Http\Controllers\AdminController::class, 'exportReport'])->name('admin.reports.export');
 });

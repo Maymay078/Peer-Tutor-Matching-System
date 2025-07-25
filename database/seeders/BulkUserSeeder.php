@@ -311,7 +311,23 @@ class BulkUserSeeder extends Seeder
                     continue;
                 }
 
-                $sessionTime = '10:00 AM - 11:00 AM';
+                // Generate varied session times for better peak hours data
+                $sessionTimes = [
+                    '8:00 AM - 9:00 AM',
+                    '9:00 AM - 10:00 AM',
+                    '10:00 AM - 11:00 AM',
+                    '11:00 AM - 12:00 PM',
+                    '12:00 PM - 1:00 PM',
+                    '1:00 PM - 2:00 PM',
+                    '2:00 PM - 3:00 PM',
+                    '3:00 PM - 4:00 PM',
+                    '4:00 PM - 5:00 PM',
+                    '5:00 PM - 6:00 PM',
+                    '6:00 PM - 7:00 PM',
+                    '7:00 PM - 8:00 PM',
+                    '8:00 PM - 9:00 PM'
+                ];
+                $sessionTime = $sessionTimes[array_rand($sessionTimes)];
 
                 // Calculate total price based on tutor's expertise price for the subject
                 $pricePerHour = 0;

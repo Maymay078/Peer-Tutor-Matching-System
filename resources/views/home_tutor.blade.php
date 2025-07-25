@@ -412,6 +412,35 @@
             <div style="flex-basis: 60%; background: white; border-radius: 15px; box-shadow: 0 2px 12px rgba(0,0,0,0.1); padding: 30px; min-width: 0;">
                 <div class="my-schedule-title">Upcoming Sessions</div>
                 @if (!empty($upcomingSessions) && count($upcomingSessions) > 0)
+                    @php
+                        // Sort upcoming sessions by date and time
+                        usort($upcomingSessions, function($a, $b) {
+                            // First sort by date
+                            $dateComparison = strcmp($a->date, $b->date);
+                            if ($dateComparison !== 0) {
+                                return $dateComparison;
+                            }
+                            
+                            // If dates are the same, sort by start time
+                            $aTimeRanges = explode(',', $a->time);
+                            $bTimeRanges = explode(',', $b->time);
+                            
+                            $aFirstTime = trim($aTimeRanges[0] ?? '');
+                            $bFirstTime = trim($bTimeRanges[0] ?? '');
+                            
+                            $aStartTime = explode(' - ', $aFirstTime)[0] ?? '';
+                            $bStartTime = explode(' - ', $bFirstTime)[0] ?? '';
+                            
+                            // Convert to 24-hour format for comparison
+                            try {
+                                $aTime24 = \Carbon\Carbon::createFromFormat('g:i A', trim($aStartTime))->format('H:i');
+                                $bTime24 = \Carbon\Carbon::createFromFormat('g:i A', trim($bStartTime))->format('H:i');
+                                return strcmp($aTime24, $bTime24);
+                            } catch (Exception $e) {
+                                return 0;
+                            }
+                        });
+                    @endphp
                     <ul style="list-style: none; padding: 0; margin: 0;">
                         @foreach ($upcomingSessions as $session)
                             <li style="border-bottom: 1px solid #e5e7eb; padding: 15px 12px; margin-bottom: 10px; border-radius: 10px; background-color: #f3f4f6;">
@@ -431,9 +460,7 @@
                                     <strong>Email:</strong> {{ $session->student_email }}
                                 </div>
                                 <div style="margin-top: 10px; display: flex; gap: 10px;">
-                                    <button class="btn" style="background-color: #ef4444;" onclick="handleCancelSession({{ $session->id }})">Cancel</button>
-                                    <!-- Removed Reschedule button as per user request -->
-                                    <!-- <button class="btn" style="background-color: #3b82f6;" onclick="handleRescheduleSession({{ $session->id }})">Reschedule</button> -->
+                                    <button class="btn" style="background-color: #ef4444;" onclick="showSessionActionModal('cancel', {{ $session->id }})">Cancel</button>
                                 </div>
                             </li>
                         @endforeach
@@ -448,6 +475,37 @@
                  <div style="width: 100%; margin-top: 30px;">
                 <div class="my-schedule-title">Your Tutoring Sessions</div>
                 <section class="featured-tutors" aria-label="Your Tutoring Sessions">
+                @php
+                    // Sort all sessions by date and time
+                    if (!empty($sessions)) {
+                        usort($sessions, function($a, $b) {
+                            // First sort by date
+                            $dateComparison = strcmp($a->date, $b->date);
+                            if ($dateComparison !== 0) {
+                                return $dateComparison;
+                            }
+                            
+                            // If dates are the same, sort by start time
+                            $aTimeRanges = explode(',', $a->time);
+                            $bTimeRanges = explode(',', $b->time);
+                            
+                            $aFirstTime = trim($aTimeRanges[0] ?? '');
+                            $bFirstTime = trim($bTimeRanges[0] ?? '');
+                            
+                            $aStartTime = explode(' - ', $aFirstTime)[0] ?? '';
+                            $bStartTime = explode(' - ', $bFirstTime)[0] ?? '';
+                            
+                            // Convert to 24-hour format for comparison
+                            try {
+                                $aTime24 = \Carbon\Carbon::createFromFormat('g:i A', trim($aStartTime))->format('H:i');
+                                $bTime24 = \Carbon\Carbon::createFromFormat('g:i A', trim($bStartTime))->format('H:i');
+                                return strcmp($aTime24, $bTime24);
+                            } catch (Exception $e) {
+                                return 0;
+                            }
+                        });
+                    }
+                @endphp
                 @forelse($sessions as $session)
                         <article class="tutor-card">
                             <div class="tutor-info" style="display: flex; align-items: center; gap: 20px;">
@@ -481,43 +539,6 @@
                                         <p>
                                             <span class="tutor-detail-label">Time:</span>
                                             {{ $session->time ?? 'N/A' }}
-                                        </p>
-                                        <p>
-                                            <span class="tutor-detail-label">Total Payment:</span>
-                                            RM{{ number_format($session->total_price ?? 0, 2) }}
-                                        </p>
-                                        <p>
-                                            <span class="tutor-detail-label">Payment Method:</span>
-                                            @php
-                                                $paymentMethod = $session->payment_method ?? '';
-                                                $paymentLabel = '';
-                                                // If payment method is a JSON array, decode and pick one
-                                                if (is_string($paymentMethod) && (str_starts_with($paymentMethod, '[') || str_starts_with($paymentMethod, '{'))) {
-                                                    $decoded = json_decode($paymentMethod, true);
-                                                    if (is_array($decoded)) {
-                                                        // Prioritize Cash if present
-                                                        if (in_array('Cash', $decoded) || in_array('cash', array_map('strtolower', $decoded))) {
-                                                            $paymentLabel = 'Cash';
-                                                        } elseif (count($decoded) > 0) {
-                                                            $paymentLabel = ucfirst($decoded[0]);
-                                                        } else {
-                                                            $paymentLabel = 'N/A';
-                                                        }
-                                                    }
-                                                } else {
-                                                    $pm = strtolower($paymentMethod);
-                                                    if ($pm === 'cash' || $pm === 'cash payment') {
-                                                        $paymentLabel = 'Cash';
-                                                    } elseif ($pm === 'online banking' || $pm === 'online_banking') {
-                                                        $paymentLabel = 'Online Banking';
-                                                    } elseif ($pm) {
-                                                        $paymentLabel = ucfirst($paymentMethod);
-                                                    } else {
-                                                        $paymentLabel = 'N/A';
-                                                    }
-                                                }
-                                            @endphp
-                                            {{ $paymentLabel }}
                                         </p>
                                         <p>
                                             <span class="tutor-detail-label">Session Status:</span>
