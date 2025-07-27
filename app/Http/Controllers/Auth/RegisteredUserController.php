@@ -14,6 +14,7 @@ use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\Rules;
 use Illuminate\View\View;
+use Carbon\Carbon;
 
 class RegisteredUserController extends Controller
 {
@@ -107,6 +108,9 @@ class RegisteredUserController extends Controller
                 'rates.*' => ['required', 'numeric', 'min:0'],
             ]);
 
+            // Custom validation for availability dates and times based on Malaysian time
+            $this->validateAvailabilityDateTime($request->availability);
+
             $user = User::create([
                 'full_name' => $request->full_name,
                 'username' => $request->username,
@@ -121,6 +125,27 @@ class RegisteredUserController extends Controller
             if (is_string($availability)) {
                 $availability = json_decode($availability, true) ?: [];
             }
+
+            // Transform availability data from form format to expected format
+            Log::info('Original availability data:', $availability);
+            $transformedAvailability = [];
+            foreach ($availability as $key => $value) {
+                if (preg_match('/^date(\d+)$/', $key, $matches)) {
+                    $index = $matches[1];
+                    $timeKey = 'time' . $index;
+                    $date = $value;
+                    $times = isset($availability[$timeKey]) ? $availability[$timeKey] : [];
+
+                    if ($date && !empty($times)) {
+                        $transformedAvailability[] = [
+                            'date' => $date,
+                            'time' => $times
+                        ];
+                    }
+                }
+            }
+            Log::info('Transformed availability data:', $transformedAvailability);
+            $availability = $transformedAvailability;
             // Combine subjects and rates into expertise array
             $subjects = $request->subjects;
             $rates = $request->rates;
@@ -147,6 +172,87 @@ class RegisteredUserController extends Controller
         } catch (\Exception $e) {
             Log::error('Unexpected error during tutor registration:', ['message' => $e->getMessage()]);
             return response()->json(['errors' => ['error' => 'An unexpected error occurred. Please try again later.']], 500);
+        }
+    }
+
+    /**
+     * Validate availability dates and times based on Malaysian time zone
+     */
+    private function validateAvailabilityDateTime($availability)
+    {
+        // Get current Malaysian time
+        $nowMalaysia = \Carbon\Carbon::now('Asia/Kuala_Lumpur');
+        $currentHour = $nowMalaysia->hour;
+
+        // Define allowed time slots (8 AM to 6 PM)
+        $allowedTimeSlots = [
+            '8:00 AM - 9:00 AM',
+            '9:00 AM - 10:00 AM',
+            '10:00 AM - 11:00 AM',
+            '11:00 AM - 12:00 PM',
+            '12:00 PM - 1:00 PM',
+            '1:00 PM - 2:00 PM',
+            '2:00 PM - 3:00 PM',
+            '3:00 PM - 4:00 PM',
+            '4:00 PM - 5:00 PM',
+            '5:00 PM - 6:00 PM'
+        ];
+
+        foreach ($availability as $key => $value) {
+            // Check if this is a date field
+            if (preg_match('/^date\d+$/', $key)) {
+                $selectedDate = \Carbon\Carbon::parse($value, 'Asia/Kuala_Lumpur');
+
+                // Check if date is in the past
+                if ($selectedDate->lt($nowMalaysia->startOfDay())) {
+                    throw new \Illuminate\Validation\ValidationException(
+                        validator([], []),
+                        ['availability' => ['Selected date cannot be in the past.']]
+                    );
+                }
+
+                // If current time is past 6 PM and selected date is today, reject
+                if ($currentHour >= 18 && $selectedDate->isSameDay($nowMalaysia)) {
+                    throw new \Illuminate\Validation\ValidationException(
+                        validator([], []),
+                        ['availability' => ['Cannot select today\'s date after 6:00 PM. Please select a future date.']]
+                    );
+                }
+            }
+
+            // Check if this is a time field
+            if (preg_match('/^time\d+$/', $key) && is_array($value)) {
+                foreach ($value as $timeSlot) {
+                    if (!in_array($timeSlot, $allowedTimeSlots)) {
+                        throw new \Illuminate\Validation\ValidationException(
+                            validator([], []),
+                            ['availability' => ['Invalid time slot selected. Time slots must be between 8:00 AM and 6:00 PM.']]
+                        );
+                    }
+                }
+
+                // Additional validation for today's date
+                $dateKey = str_replace('time', 'date', $key);
+                if (isset($availability[$dateKey])) {
+                    $selectedDate = \Carbon\Carbon::parse($availability[$dateKey], 'Asia/Kuala_Lumpur');
+
+                    if ($selectedDate->isSameDay($nowMalaysia)) {
+                        foreach ($value as $timeSlot) {
+                            $startTime = explode(' - ', $timeSlot)[0];
+                            $hour = (int) explode(':', $startTime)[0];
+                            $isPM = strpos($startTime, 'PM') !== false;
+                            $hour24 = $isPM && $hour !== 12 ? $hour + 12 : (!$isPM && $hour === 12 ? 0 : $hour);
+
+                            if ($hour24 <= $currentHour) {
+                                throw new \Illuminate\Validation\ValidationException(
+                                    validator([], []),
+                                    ['availability' => ['Cannot select past time slots for today\'s date.']]
+                                );
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }

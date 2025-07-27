@@ -532,9 +532,27 @@
             const newDateSection = document.createElement('div');
             newDateSection.classList.add('date-section');
             newDateSection.id = `date${dateCount}`;
+
+            // Get minimum date based on Malaysian time
+            const now = new Date();
+            const malaysiaOffset = 8 * 60; // Malaysia is UTC+8
+            const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
+            const malaysiaTime = new Date(utc + (malaysiaOffset * 60000));
+            const currentHour = malaysiaTime.getHours();
+            let minDate = new Date(malaysiaTime);
+            if (currentHour >= 18) { // 6 PM or later
+                minDate.setDate(minDate.getDate() + 1);
+            }
+
+            // Format date as YYYY-MM-DD for the min attribute
+            const year = minDate.getFullYear();
+            const month = String(minDate.getMonth() + 1).padStart(2, '0');
+            const day = String(minDate.getDate()).padStart(2, '0');
+            const minDateStr = `${year}-${month}-${day}`;
+
             newDateSection.innerHTML = `
                 <label for="date${dateCount}_input">Date ${dateCount}:</label>
-                <input type="date" name="availability[date${dateCount}]" id="date${dateCount}_input" />
+                <input type="date" name="availability[date${dateCount}]" id="date${dateCount}_input" min="${minDateStr}" />
                 <div class="time-slots">
                     <label class="time-slot-label"><input type="checkbox" name="availability[time${dateCount}][]" value="8:00 AM - 9:00 AM" /> 8:00 AM - 9:00 AM</label>
                     <label class="time-slot-label"><input type="checkbox" name="availability[time${dateCount}][]" value="9:00 AM - 10:00 AM" /> 9:00 AM - 10:00 AM</label>
@@ -550,6 +568,13 @@
                 <button type="button" class="remove-date-button" id="remove-date${dateCount}">Remove Date ${dateCount}</button>
             `;
             availabilityContainer.appendChild(newDateSection);
+
+            // Add event listener to the new date input
+            const newDateInput = newDateSection.querySelector('input[type="date"]');
+            newDateInput.addEventListener('change', function() {
+                validateDateAndTimeSlots(this);
+            });
+
             updateRemoveDateButtons();
         });
 
@@ -717,31 +742,116 @@
             });
         }
 
-        // Real-time min date for all date pickers (including availability and dob)
+        // Real-time min date for all date pickers with Malaysian time validation
         function setMinDatePickers() {
-            const today = new Date();
-            today.setHours(0,0,0,0);
-            const todayStr = today.toISOString().split('T')[0];
+            // Get current Malaysian time more reliably
+            const now = new Date();
+            const malaysiaOffset = 8 * 60; // Malaysia is UTC+8
+            const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
+            const malaysiaTime = new Date(utc + (malaysiaOffset * 60000));
+            const currentHour = malaysiaTime.getHours();
+
+            // If current time is past 6 PM, set minimum date to tomorrow
+            let minDate = new Date(malaysiaTime);
+            if (currentHour >= 18) { // 6 PM or later
+                minDate.setDate(minDate.getDate() + 1);
+            }
+
+            // Format date as YYYY-MM-DD for the min attribute
+            const year = minDate.getFullYear();
+            const month = String(minDate.getMonth() + 1).padStart(2, '0');
+            const day = String(minDate.getDate()).padStart(2, '0');
+            const minDateStr = `${year}-${month}-${day}`;
+
+            console.log('Malaysian time:', malaysiaTime.toString());
+            console.log('Current hour in Malaysia:', currentHour);
+            console.log('Setting min date to:', minDateStr);
+
             // Set min for DOB (if you want to restrict to users at least 16 years old, adjust accordingly)
             const dobInput = document.getElementById('dob');
             if (dobInput) {
                 dobInput.setAttribute('max', new Date(new Date().setFullYear(new Date().getFullYear() - 16)).toISOString().split('T')[0]);
             }
+
             // Set min for all availability date pickers
             document.querySelectorAll('input[type="date"][name^="availability[date"]').forEach(input => {
-                input.setAttribute('min', todayStr);
-                // If the value is before today, clear it
-                if (input.value && new Date(input.value) < today) {
+                input.setAttribute('min', minDateStr);
+                console.log(`Set min for ${input.id} to ${minDateStr}`);
+                // If the value is before the minimum allowed date, clear it
+                if (input.value && input.value < minDateStr) {
+                    console.log(`Clearing invalid date ${input.value} from ${input.id}`);
                     input.value = '';
                 }
+
+                // Add change event listener to validate selected date and enable/disable time slots
+                input.addEventListener('change', function() {
+                    validateDateAndTimeSlots(this);
+                });
             });
+        }
+
+        // Validate selected date and enable/disable time slots based on Malaysian time
+        function validateDateAndTimeSlots(dateInput) {
+            const selectedDate = new Date(dateInput.value);
+            // Get current Malaysian time more reliably
+            const now = new Date();
+            const malaysiaOffset = 8 * 60; // Malaysia is UTC+8
+            const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
+            const malaysiaTime = new Date(utc + (malaysiaOffset * 60000));
+            const currentHour = malaysiaTime.getHours();
+
+            // Get the time slots container for this date section
+            const dateSection = dateInput.closest('.date-section');
+            const timeSlots = dateSection.querySelectorAll('.time-slot-label input[type="checkbox"]');
+
+            // If selected date is today, disable time slots that have already passed
+            if (selectedDate.toDateString() === malaysiaTime.toDateString()) {
+                timeSlots.forEach(checkbox => {
+                    const timeValue = checkbox.value;
+                    const startTime = timeValue.split(' - ')[0];
+                    const hour = parseInt(startTime.split(':')[0]);
+                    const isPM = startTime.includes('PM');
+                    const hour24 = isPM && hour !== 12 ? hour + 12 : (!isPM && hour === 12 ? 0 : hour);
+
+                    // Disable time slots that have already passed
+                    if (hour24 <= currentHour) {
+                        checkbox.disabled = true;
+                        checkbox.checked = false;
+                        checkbox.parentElement.style.opacity = '0.5';
+                        checkbox.parentElement.style.pointerEvents = 'none';
+                    } else {
+                        checkbox.disabled = false;
+                        checkbox.parentElement.style.opacity = '1';
+                        checkbox.parentElement.style.pointerEvents = 'auto';
+                    }
+                });
+            } else {
+                // For future dates, enable all time slots
+                timeSlots.forEach(checkbox => {
+                    checkbox.disabled = false;
+                    checkbox.parentElement.style.opacity = '1';
+                    checkbox.parentElement.style.pointerEvents = 'auto';
+                });
+            }
         }
         document.addEventListener('DOMContentLoaded', function() {
             setMinDatePickers();
+
+            // Add validation to initial date input
+            const initialDateInput = document.getElementById('date1_input');
+            if (initialDateInput) {
+                initialDateInput.addEventListener('change', function() {
+                    validateDateAndTimeSlots(this);
+                });
+            }
+
             // Also set min date on dynamically added date pickers
             document.getElementById('add-date-btn').addEventListener('click', function() {
                 setTimeout(setMinDatePickers, 100);
             });
+
+            // Update min dates every minute to handle time changes (especially around 6 PM)
+            setInterval(setMinDatePickers, 60000);
         });
     </script>
 </body>

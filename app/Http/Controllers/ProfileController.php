@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Http\Requests\ProfileUpdateRequest;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -109,9 +110,10 @@ class ProfileController extends Controller
     /**
      * Update the user's profile information.
      */
-    public function update(ProfileUpdateRequest $request): RedirectResponse
+    public function update(ProfileUpdateRequest $request)
     {
-        $user = $request->user();
+        try {
+            $user = $request->user();
 
         $user->fill($request->validated());
 
@@ -130,83 +132,109 @@ class ProfileController extends Controller
 
         $user->save();
 
-        // Update or create student profile data
-        $studentData = $request->only(['major', 'year', 'preferred_course', 'availability']);
+        // Update or create student profile data (only for students)
+        if ($user->role === 'student') {
+            $studentData = $request->only(['major', 'year', 'preferred_course']);
 
-        // Convert comma-separated strings back to arrays for preferred_course
-        if (isset($studentData['preferred_course']) && is_string($studentData['preferred_course'])) {
-            $studentData['preferred_course'] = array_map('trim', explode(',', $studentData['preferred_course']));
-        }
-
-        // Convert availability string back to array of [date, (time, time)] entries
-        if (isset($studentData['availability']) && is_string($studentData['availability'])) {
-            $availabilityEntries = array_map('trim', explode(',', $studentData['availability']));
-            $parsedAvailability = [];
-            foreach ($availabilityEntries as $entry) {
-                // Parse entry like "Date (time, time)"
-                if (preg_match('/^(.*?)\s*\((.*?)\)$/', $entry, $matches)) {
-                    $date = trim($matches[1]);
-                    $times = trim($matches[2]);
-                    $parsedAvailability[] = [$date, $times];
-                } else {
-                    $parsedAvailability[] = $entry;
-                }
+            // Convert comma-separated strings back to arrays for preferred_course
+            if (isset($studentData['preferred_course']) && is_string($studentData['preferred_course'])) {
+                $studentData['preferred_course'] = array_map('trim', explode(',', $studentData['preferred_course']));
             }
-            $studentData['availability'] = $parsedAvailability;
-        }
 
-        // Generate unique student_id if creating new student record
-        if (!$user->student) {
-            $studentData['student_id'] = 'STU-' . uniqid();
-        } elseif (!isset($studentData['student_id'])) {
-            $studentData['student_id'] = $user->student->student_id;
-        }
-
-        $user->student()->updateOrCreate(
-            ['user_id' => $user->id],
-            $studentData
-        );
-
-        // Update or create tutor profile data
-        $tutorData = $request->only(['expertise', 'payment_details', 'availability']);
-
-        // Convert expertise and payment_details from arrays to JSON strings if needed
-        if (isset($tutorData['expertise']) && is_array($tutorData['expertise'])) {
-            $tutorData['expertise'] = json_encode($tutorData['expertise']);
-        }
-        if (isset($tutorData['payment_details']) && is_array($tutorData['payment_details'])) {
-            $tutorData['payment_details'] = json_encode($tutorData['payment_details']);
-        }
-
-        // Convert availability string back to array of [date, (time, time)] entries for tutor
-        if (isset($tutorData['availability']) && is_string($tutorData['availability'])) {
-            $availabilityEntries = array_map('trim', explode(',', $tutorData['availability']));
-            $parsedAvailability = [];
-            foreach ($availabilityEntries as $entry) {
-                if (preg_match('/^(.*?)\s*\((.*?)\)$/', $entry, $matches)) {
-                    $date = trim($matches[1]);
-                    $times = trim($matches[2]);
-                    $parsedAvailability[] = ['date' => $date, 'time' => array_map('trim', explode(',', $times))];
-                } else {
-                    $parsedAvailability[] = $entry;
-                }
+            // Generate unique student_id if creating new student record
+            if (!$user->student) {
+                $studentData['student_id'] = 'STU-' . uniqid();
+            } elseif (!isset($studentData['student_id'])) {
+                $studentData['student_id'] = $user->student->student_id;
             }
-            $tutorData['availability'] = json_encode($parsedAvailability);
+
+            $user->student()->updateOrCreate(
+                ['user_id' => $user->id],
+                $studentData
+            );
         }
 
-        // Generate unique tutor_id if creating new tutor record
-        if (!$user->tutor) {
-            $tutorData['tutor_id'] = 'TUT-' . uniqid();
-        } elseif (!isset($tutorData['tutor_id'])) {
-            $tutorData['tutor_id'] = $user->tutor->tutor_id;
+        // Update or create tutor profile data (only for tutors)
+        if ($user->role === 'tutor') {
+            $tutorData = $request->only(['expertise', 'payment_details', 'availability']);
+            \Log::info('Tutor profile update data:', $tutorData);
+
+            // Convert expertise from array to JSON string if needed
+            if (isset($tutorData['expertise']) && is_array($tutorData['expertise'])) {
+                $tutorData['expertise'] = json_encode($tutorData['expertise']);
+            }
+
+            // Handle payment_details - convert array to JSON string
+            if (isset($tutorData['payment_details']) && is_array($tutorData['payment_details'])) {
+                $tutorData['payment_details'] = json_encode($tutorData['payment_details']);
+            } elseif (!isset($tutorData['payment_details'])) {
+                $tutorData['payment_details'] = json_encode([]);
+            }
+
+            // Transform availability data from form format to expected format
+            if (isset($tutorData['availability']) && is_array($tutorData['availability'])) {
+                $availability = $tutorData['availability'];
+                $transformedAvailability = [];
+
+                foreach ($availability as $key => $value) {
+                    if (preg_match('/^date(\d+)$/', $key, $matches)) {
+                        $index = $matches[1];
+                        $timeKey = 'time' . $index;
+                        $date = $value;
+                        $times = isset($availability[$timeKey]) ? $availability[$timeKey] : [];
+
+                        if ($date && !empty($times)) {
+                            $transformedAvailability[] = [
+                                'date' => $date,
+                                'time' => $times
+                            ];
+                        }
+                    }
+                }
+                $tutorData['availability'] = $transformedAvailability;
+            }
+
+            // Generate unique tutor_id if creating new tutor record
+            if (!$user->tutor) {
+                $tutorData['tutor_id'] = 'TUT' . str_pad($user->id, 5, '0', STR_PAD_LEFT);
+            } elseif (!isset($tutorData['tutor_id'])) {
+                $tutorData['tutor_id'] = $user->tutor->tutor_id;
+            }
+
+            $user->tutor()->updateOrCreate(
+                ['user_id' => $user->id],
+                $tutorData
+            );
         }
 
-        $user->tutor()->updateOrCreate(
-            ['user_id' => $user->id],
-            $tutorData
-        );
+            // Check if this is an AJAX request
+            if ($request->wantsJson() || $request->ajax()) {
+                // Refresh user data to get updated values
+                $user->refresh();
+                $user->load(['student', 'tutor']);
 
-        return Redirect::route('profile.edit')->with('status', 'profile-updated');
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Profile updated successfully!',
+                    'user' => $user
+                ]);
+            }
+
+            return Redirect::route('profile.edit')->with('status', 'profile-updated');
+        } catch (\Exception $e) {
+            // Log the error for debugging
+            \Log::error('Profile update error: ' . $e->getMessage());
+
+            // Check if this is an AJAX request
+            if ($request->wantsJson() || $request->ajax()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Failed to update profile: ' . $e->getMessage()
+                ], 500);
+            }
+
+            return Redirect::route('profile.edit')->with('error', 'Failed to update profile.');
+        }
     }
 
     /**

@@ -15,13 +15,20 @@ class ProfileUpdateRequest extends FormRequest
      */
     public function rules(): array
     {
-        return [
+        $user = $this->user();
+        $rules = [
             'full_name' => [
                 'required',
                 'string',
                 'max:255',
                 // Disallow common prefixes like Mr, Miss, Prof, Dr, etc.
                 'not_regex:/^(Mr|Mrs|Miss|Ms|Dr|Prof)\b/i',
+            ],
+            'username' => [
+                'required',
+                'string',
+                'max:255',
+                Rule::unique(User::class)->ignore($user->id),
             ],
             'date_of_birth' => [
                 'required',
@@ -40,20 +47,30 @@ class ProfileUpdateRequest extends FormRequest
                 'lowercase',
                 'email',
                 'max:255',
-                Rule::unique(User::class)->ignore($this->user()->id),
+                Rule::unique(User::class)->ignore($user->id),
             ],
             'profile_image' => ['nullable', 'image', 'max:2048'], // max 2MB
-            'availability' => ['nullable', 'array'],
-            'major' => ['required', 'string', 'max:255'],
-            'year' => ['required', 'integer', 'min:1', 'max:10'],
-            'preferred_course' => ['nullable', 'string', 'max:255'],
-            // Tutor fields
-            'expertise' => ['nullable', 'array'],
-            'expertise.*.name' => ['required_with:expertise', 'string', 'max:255'],
-            'expertise.*.price_per_hour' => ['required_with:expertise', 'numeric', 'min:0'],
-            'payment_details' => ['nullable', 'array'],
-            'payment_details.*' => ['string'],
-            'availability' => ['nullable', 'string'], // For tutor availability string format
         ];
+
+        // Add role-specific validation rules
+        if ($user && $user->role === 'student') {
+            $rules['major'] = ['required', 'string', 'max:255'];
+            $rules['year'] = ['required', 'integer', 'min:1', 'max:10'];
+            $rules['preferred_course'] = ['nullable', 'string', 'max:255'];
+        } elseif ($user && $user->role === 'tutor') {
+            // Tutor fields
+            $rules['expertise'] = ['nullable', 'array'];
+            $rules['expertise.*.name'] = ['required_with:expertise', 'string', 'max:255'];
+            $rules['expertise.*.price_per_hour'] = ['required_with:expertise', 'numeric', 'min:0'];
+            $rules['payment_details'] = ['nullable', 'array'];
+            $rules['payment_details.*'] = ['string', 'in:cash,online_banking'];
+
+            // Availability validation for tutors
+            $rules['availability'] = ['nullable', 'array'];
+            $rules['availability.date*'] = ['nullable', 'date'];
+            $rules['availability.time*'] = ['nullable', 'array'];
+        }
+
+        return $rules;
     }
 }

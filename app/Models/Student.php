@@ -10,17 +10,15 @@ class Student extends Model
     use HasFactory;
 
     protected $fillable = [
-        'user_id', 
-        'student_id', 
-        'major', 
-        'year', 
-        'preferred_course', 
-        'availability'
+        'user_id',
+        'student_id',
+        'major',
+        'year',
+        'preferred_course'
     ];
 
     protected $casts = [
         'preferred_course' => 'array',
-        'availability' => 'array',
     ];
 
     public function user()

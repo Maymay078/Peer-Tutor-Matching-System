@@ -7,6 +7,7 @@ use App\Models\Student;
 use App\Models\Tutor;
 use App\Models\BookingSession;
 use Illuminate\Http\Request;
+use Carbon\Carbon;
 
 class UserController extends Controller
 {
@@ -360,6 +361,9 @@ class UserController extends Controller
         $dates[] = $dateValue;
     }
 
+    // Custom validation for availability dates and times based on Malaysian time
+    $this->validateAvailabilityDateTime($validated['availability']);
+
     // Create the user
     $user = User::create([
         'full_name'       => $validated['full_name'],
@@ -379,13 +383,32 @@ class UserController extends Controller
                 'availability'    => json_encode($validated['availability']), // Store availability as JSON
             ]);
         } elseif ($validated['role'] == 'tutor') {
-        $tutor = Tutor::create([
-            'user_id'         => $user->id,
-            'expertise'       => $request->input('expertise'),
-            'payment_details' => $request->input('payment_details'),
-            'availability'    => json_encode($validated['availability']), // Store availability as JSON
-        ]);
-    }
+            // Transform availability data from form format to expected format
+            $availability = $validated['availability'];
+            $transformedAvailability = [];
+            foreach ($availability as $key => $value) {
+                if (preg_match('/^date(\d+)$/', $key, $matches)) {
+                    $index = $matches[1];
+                    $timeKey = 'time' . $index;
+                    $date = $value;
+                    $times = isset($availability[$timeKey]) ? $availability[$timeKey] : [];
+
+                    if ($date && !empty($times)) {
+                        $transformedAvailability[] = [
+                            'date' => $date,
+                            'time' => $times
+                        ];
+                    }
+                }
+            }
+
+            $tutor = Tutor::create([
+                'user_id'         => $user->id,
+                'expertise'       => $request->input('expertise'),
+                'payment_details' => $request->input('payment_details'),
+                'availability'    => $transformedAvailability, // Store transformed availability
+            ]);
+        }
 
     return view('users.index', ['users' => User::all()]);
 }
@@ -1384,10 +1407,74 @@ class UserController extends Controller
             return response()->json(['error' => 'Server error occurred while cancelling session.'], 500);
         }
     }
+    /**
+     * Validate availability dates and times based on Malaysian time zone
+     */
+    private function validateAvailabilityDateTime($availability)
+    {
+        // Get current Malaysian time
+        $nowMalaysia = \Carbon\Carbon::now('Asia/Kuala_Lumpur');
+        $currentHour = $nowMalaysia->hour;
+
+        // Define allowed time slots (8 AM to 6 PM)
+        $allowedTimeSlots = [
+            '8:00 AM - 9:00 AM',
+            '9:00 AM - 10:00 AM',
+            '10:00 AM - 11:00 AM',
+            '11:00 AM - 12:00 PM',
+            '12:00 PM - 1:00 PM',
+            '1:00 PM - 2:00 PM',
+            '2:00 PM - 3:00 PM',
+            '3:00 PM - 4:00 PM',
+            '4:00 PM - 5:00 PM',
+            '5:00 PM - 6:00 PM'
+        ];
+
+        foreach ($availability as $key => $value) {
+            // Check if this is a date field
+            if (preg_match('/^date\d+$/', $key)) {
+                $selectedDate = \Carbon\Carbon::parse($value, 'Asia/Kuala_Lumpur');
+
+                // Check if date is in the past
+                if ($selectedDate->lt($nowMalaysia->startOfDay())) {
+                    return back()->withErrors(['availability' => 'Selected date cannot be in the past.'])->withInput();
+                }
+
+                // If current time is past 6 PM and selected date is today, reject
+                if ($currentHour >= 18 && $selectedDate->isSameDay($nowMalaysia)) {
+                    return back()->withErrors(['availability' => 'Cannot select today\'s date after 6:00 PM. Please select a future date.'])->withInput();
+                }
+            }
+
+            // Check if this is a time field
+            if (preg_match('/^time\d+$/', $key) && is_array($value)) {
+                foreach ($value as $timeSlot) {
+                    if (!in_array($timeSlot, $allowedTimeSlots)) {
+                        return back()->withErrors(['availability' => 'Invalid time slot selected. Time slots must be between 8:00 AM and 6:00 PM.'])->withInput();
+                    }
+                }
+
+                // Additional validation for today's date
+                $dateKey = str_replace('time', 'date', $key);
+                if (isset($availability[$dateKey])) {
+                    $selectedDate = \Carbon\Carbon::parse($availability[$dateKey], 'Asia/Kuala_Lumpur');
+
+                    if ($selectedDate->isSameDay($nowMalaysia)) {
+                        foreach ($value as $timeSlot) {
+                            $startTime = explode(' - ', $timeSlot)[0];
+                            $hour = (int) explode(':', $startTime)[0];
+                            $isPM = strpos($startTime, 'PM') !== false;
+                            $hour24 = $isPM && $hour !== 12 ? $hour + 12 : (!$isPM && $hour === 12 ? 0 : $hour);
+
+                            if ($hour24 <= $currentHour) {
+                                return back()->withErrors(['availability' => 'Cannot select past time slots for today\'s date.'])->withInput();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
-
-
-
-
 
 

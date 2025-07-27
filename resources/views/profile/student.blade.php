@@ -242,7 +242,7 @@
                         </div>
                     </div>
                     <div class="md:col-span-2 flex justify-end mt-8 space-x-4">
-                        <button type="submit" id="save-changes-btn" class="px-6 py-4 bg-indigo-600 text-white rounded-lg text-lg font-semibold hover:bg-indigo-700 transition shadow-lg hover:shadow-xl transform hover:-translate-y-0.5 active:translate-y-0 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-opacity-50" disabled>
+                        <button type="submit" id="save-changes-btn" class="px-6 py-4 bg-indigo-600 text-white rounded-lg text-lg font-semibold hover:bg-indigo-700 transition shadow-lg hover:shadow-xl transform hover:-translate-y-0.5 active:translate-y-0 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-opacity-50 disabled:bg-gray-400 disabled:cursor-not-allowed disabled:hover:bg-gray-400 disabled:transform-none disabled:shadow-none disabled:pointer-events-none disabled:opacity-50" disabled>
                             Save Changes
                         </button>
                     </div>
@@ -317,16 +317,92 @@
                                     }
                                 }
                             });
-                            saveBtn.disabled = !isChanged;
+
+                            // Update button state and styling based on changes
+                            if (isChanged) {
+                                saveBtn.disabled = false;
+                                saveBtn.textContent = 'Save Changes';
+                                saveBtn.style.backgroundColor = '#4f46e5'; // indigo-600
+                                saveBtn.style.opacity = '1';
+                                saveBtn.style.cursor = 'pointer';
+                                saveBtn.style.pointerEvents = 'auto';
+                                saveBtn.style.transform = '';
+                                saveBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+                                saveBtn.classList.add('hover:bg-indigo-700', 'hover:shadow-xl', 'hover:-translate-y-0.5');
+                            } else {
+                                saveBtn.disabled = true;
+                                saveBtn.textContent = 'No Changes Made';
+                                saveBtn.style.backgroundColor = '#9ca3af'; // gray-400
+                                saveBtn.style.opacity = '0.5';
+                                saveBtn.style.cursor = 'not-allowed';
+                                saveBtn.style.pointerEvents = 'none';
+                                saveBtn.style.transform = 'none';
+                                saveBtn.classList.add('opacity-50', 'cursor-not-allowed');
+                                saveBtn.classList.remove('hover:bg-indigo-700', 'hover:shadow-xl', 'hover:-translate-y-0.5');
+                            }
                         }
                         form.addEventListener('input', checkFormChanged);
                         form.addEventListener('change', checkFormChanged);
                         checkFormChanged();
+
+                        // Prevent button clicks when disabled - multiple event listeners for better coverage
+                        saveBtn.addEventListener('click', function(event) {
+                            if (saveBtn.disabled) {
+                                event.preventDefault();
+                                event.stopPropagation();
+                                event.stopImmediatePropagation();
+                                showProfileStatus('No changes have been made to save.', false);
+                                return false;
+                            }
+                        }, true); // Use capture phase
+
+                        // Additional prevention for mousedown and other events
+                        ['mousedown', 'mouseup', 'touchstart', 'touchend'].forEach(eventType => {
+                            saveBtn.addEventListener(eventType, function(event) {
+                                if (saveBtn.disabled) {
+                                    event.preventDefault();
+                                    event.stopPropagation();
+                                    event.stopImmediatePropagation();
+                                    return false;
+                                }
+                            }, true);
+                        });
+
+                        // Add image preview functionality
+                        const profileImageInput = document.getElementById('profile_image');
+                        const profileImg = document.querySelector('img[alt="Profile Image"], img[alt="Default Profile Image"]');
+
+                        if (profileImageInput && profileImg) {
+                            profileImageInput.addEventListener('change', function(event) {
+                                const file = event.target.files[0];
+                                if (file) {
+                                    // Validate file type
+                                    if (!file.type.startsWith('image/')) {
+                                        alert('Please select a valid image file.');
+                                        return;
+                                    }
+
+                                    // Validate file size (2MB max)
+                                    if (file.size > 2 * 1024 * 1024) {
+                                        alert('Image size must be less than 2MB.');
+                                        return;
+                                    }
+
+                                    // Show preview immediately
+                                    const reader = new FileReader();
+                                    reader.onload = function(e) {
+                                        profileImg.src = e.target.result;
+                                        profileImg.alt = "Profile Image Preview";
+                                    };
+                                    reader.readAsDataURL(file);
+                                }
+                            });
+                        }
                         // AJAX submit
                         form.addEventListener('submit', function(event) {
                             if (saveBtn.disabled) {
                                 event.preventDefault();
-                                alert('There are no changes made.');
+                                showProfileStatus('No changes have been made to save.', false);
                                 return;
                             }
                             event.preventDefault();
@@ -345,6 +421,19 @@
                             .then(async response => {
                                 saveBtn.textContent = 'Save Changes';
                                 if (response.ok) {
+                                    const responseData = await response.json();
+
+                                    // Update form fields with fresh data from server
+                                    if (responseData.user) {
+                                        updateFormWithUserData(responseData.user);
+                                    }
+
+                                    // Clear file input after successful upload
+                                    const fileInput = document.getElementById('profile_image');
+                                    if (fileInput) {
+                                        fileInput.value = '';
+                                    }
+
                                     // Update initial values to new values
                                     Array.from(form.elements).forEach(input => {
                                         if (input.name) {
@@ -352,25 +441,106 @@
                                         }
                                     });
                                     saveBtn.disabled = true;
+                                    checkFormChanged(); // Update button text and styling
                                     showProfileStatus('Profile updated successfully!', false);
+
+                                    // Auto-hide success message after 3 seconds
+                                    setTimeout(() => {
+                                        const statusDiv = document.getElementById('profile-status-msg');
+                                        if (statusDiv) {
+                                            statusDiv.style.display = 'none';
+                                        }
+                                    }, 3000);
                                 } else {
                                     let msg = 'Failed to update profile.';
                                     try {
                                         const data = await response.json();
                                         if (data.errors) {
                                             msg = Object.values(data.errors).flat().join('\n');
+                                        } else if (data.message) {
+                                            msg = data.message;
                                         }
-                                    } catch {}
+                                    } catch (e) {
+                                        console.error('Error parsing response:', e);
+                                    }
                                     showProfileStatus(msg, true);
                                     saveBtn.disabled = false;
                                 }
                             })
-                            .catch(() => {
+                            .catch((error) => {
+                                console.error('Network error:', error);
                                 saveBtn.textContent = 'Save Changes';
-                                showProfileStatus('Failed to update profile.', true);
+                                showProfileStatus('Network error. Please check your connection and try again.', true);
                                 saveBtn.disabled = false;
                             });
                         });
+
+                        function updateFormWithUserData(user) {
+                            // Update profile image immediately
+                            const profileImg = document.querySelector('img[alt="Profile Image"], img[alt="Default Profile Image"]');
+                            if (profileImg && user.profile_image) {
+                                const imageUrl = user.profile_image.startsWith('http')
+                                    ? user.profile_image
+                                    : `{{ asset('storage/') }}/${user.profile_image}`;
+                                profileImg.src = imageUrl;
+                                profileImg.alt = "Profile Image";
+                            } else if (profileImg && !user.profile_image) {
+                                // Fallback to default avatar if no profile image
+                                const defaultUrl = `https://ui-avatars.com/api/?name=${encodeURIComponent(user.full_name || 'User')}&background=random&color=fff`;
+                                profileImg.src = defaultUrl;
+                                profileImg.alt = "Default Profile Image";
+                            }
+
+                            // Update basic user fields
+                            const fullNameInput = document.querySelector('input[name="full_name"]');
+                            if (fullNameInput && user.full_name) {
+                                fullNameInput.value = user.full_name;
+                            }
+
+                            const usernameInput = document.querySelector('input[name="username"]');
+                            if (usernameInput && user.username) {
+                                usernameInput.value = user.username;
+                            }
+
+                            const emailInput = document.querySelector('input[name="email"]');
+                            if (emailInput && user.email) {
+                                emailInput.value = user.email;
+                            }
+
+                            const dobInput = document.querySelector('input[name="date_of_birth"]');
+                            if (dobInput && user.date_of_birth) {
+                                dobInput.value = user.date_of_birth;
+                            }
+
+                            const phoneInput = document.querySelector('input[name="phone_number"]');
+                            if (phoneInput && user.phone_number) {
+                                phoneInput.value = user.phone_number;
+                            }
+
+                            // Update student-specific fields
+                            if (user.student) {
+                                const majorInput = document.querySelector('input[name="major"]');
+                                if (majorInput && user.student.major) {
+                                    majorInput.value = user.student.major;
+                                }
+
+                                const yearInput = document.querySelector('input[name="year"]');
+                                if (yearInput && user.student.year) {
+                                    yearInput.value = user.student.year;
+                                }
+
+                                const preferredCourseInput = document.querySelector('input[name="preferred_course"]');
+                                if (preferredCourseInput && user.student.preferred_course) {
+                                    // Handle preferred_course as array or string
+                                    let preferredCourseValue = user.student.preferred_course;
+                                    if (Array.isArray(preferredCourseValue)) {
+                                        preferredCourseValue = preferredCourseValue.join(', ');
+                                    }
+                                    preferredCourseInput.value = preferredCourseValue;
+                                }
+                            }
+                        }
+
                         function showProfileStatus(message, isError) {
                             let statusDiv = document.getElementById('profile-status-msg');
                             if (!statusDiv) {
